@@ -1,0 +1,123 @@
+import torch
+import torch.nn as nn
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+class fcn(nn.Module):
+    def __init__(self,layers_temp,layers_lap):
+        super(fcn, self).__init__()
+
+        self.layers_temp=layers_temp
+        self.layers_lap=layers_lap
+
+        # Activation function
+        self.activation=nn.Tanh
+        # Loss function
+        self.loss_function=nn.MSELoss(reduction='mean')
+        # Iterator for optimization 
+        self.iter = 0
+
+        # Temperature branch
+        self.linears_temp = nn.ModuleList([nn.Linear(self.layers_temp[i], self.layers_temp[i+1]) for i in range(len(self.layers_temp)-1)])
+        # Laplacian branch
+        self.linears_lap = nn.ModuleList([nn.Linear(self.layers_lap[i], self.layers_lap[i+1]) for i in range(len(self.layers_lap)-1)])
+
+        # Xavier initialization for temperature branch
+        for i in range(len(self.layers_temp)-1):
+            nn.init.xavier_normal_(self.linears_temp[i].weight.data, gain=1.0)
+            # set biases to zero
+            nn.init.zeros_(self.linears_temp[i].bias.data)
+
+        # Xavier initialization for laplacian branch
+        for i in range(len(self.layers_lap)-1):
+            nn.init.xavier_normal_(self.linears_lap[i].weight.data, gain=1.0)
+            # set biases to zero
+            nn.init.zeros_(self.linears_lap[i].bias.data)
+
+        
+        # Initialization of the inverse problem parameters
+        diffusivity_z=1e-6
+        diffusivity_y=1e-6
+        diffusivity_x=1e-6
+
+        self.a_z = torch.tensor([diffusivity_z], requires_grad=True).float()
+        self.a_y = torch.tensor([diffusivity_y], requires_grad=True).float()
+        self.a_x = torch.tensor([diffusivity_x], requires_grad=True).float()  
+          
+        
+        self.a_z = nn.Parameter(self.a_z)
+        self.a_y = nn.Parameter(self.a_y)
+        self.a_x = nn.Parameter(self.a_x)
+
+    def forward(self,x):
+        # Coordinates to our network comes in format [t, y, x]
+        if torch.is_tensor(x) != True:         
+            x = torch.from_numpy(x)                
+            
+        # u_b = torch.from_numpy(ub).float().to(device)
+        # l_b = torch.from_numpy(lb).float().to(device)
+                        
+        # #preprocessing input 
+        # x = (x - l_b)/(u_b - l_b) #feature scaling
+            
+        # #convert to float
+        # coordis = x.float()
+
+        # Remain data copy for the second derivative estimation
+        lap_data=coordis.clone()
+            
+        for i in range(len(self.layers_temp)-2):
+            u = self.linears_temp[i](coordis)
+            coordis = self.activation(u)
+                
+        u = self.linears_temp[-1](coordis)
+
+        for i in range(len(self.layers_lap)-2):                
+            z = self.linears_lap[i](lap_data)
+            lap_data = self.activation(z)
+                
+        u_zz = self.linears_lap[-1](lap_data)
+            
+        return u,u_zz
+        
+    def loss_data(self,x,y):
+        temps,_=self(x)
+        loss_val=self.loss_function(temps,y)
+        return loss_val
+        
+    def loss_PDE(self,x_pde):
+        a_x=self.a_x
+        a_y=self.a_y
+        a_z=self.a_z
+
+        g=x_pde.clone()
+        g.requires_grad=True
+            
+        # Our differential function
+        u,u_zz=self(g)
+
+        # First derivative
+        u_t_x=torch.autograd.grad(u,g,torch.ones_like(u).to(device),retain_graph=True,create_graph=True)[0]
+
+        # Second derivative
+        u_tt_xx=torch.autograd.grad(u_t_x,g,torch.ones_like(u_t_x).to(device),create_graph=True)[0]
+
+        # Sepration of derivatives
+        u_t=u_t_x[:,0]
+        u_yy=u_tt_xx[:,1]
+        u_xx=u_tt_xx[:,2]
+
+        f=u_t-(a_x*u_xx+a_y*u_yy+a_z*u_zz)
+
+        loss_val=torch.mean(f**2)
+
+        return loss_val
+        
+    def loss(self,x,y):
+        loss_u=self.loss_data(x,y)
+        loss_f=self.loss_PDE(x)
+
+        loss_val=loss_u+loss_f
+        return loss_val
+    
+    
