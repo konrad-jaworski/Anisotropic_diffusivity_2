@@ -1,0 +1,10 @@
+venv/
+.venv/
+
+venv_pc/
+.venv_pc/
+
+checkpoints/
+logs/
+__pycache__/
+*.pt
