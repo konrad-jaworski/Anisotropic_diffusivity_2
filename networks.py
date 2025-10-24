@@ -11,7 +11,7 @@ class fcn(nn.Module):
         self.layers_lap=layers_lap
 
         # Activation function
-        self.activation=nn.Tanh
+        self.activation=nn.Tanh()
         # Loss function
         self.loss_function=nn.MSELoss(reduction='mean')
         # Iterator for optimization 
@@ -22,7 +22,7 @@ class fcn(nn.Module):
         # Laplacian branch
         self.linears_lap = nn.ModuleList([nn.Linear(self.layers_lap[i], self.layers_lap[i+1]) for i in range(len(self.layers_lap)-1)])
 
-        # Xavier initialization for temperature branch
+        # Xavier initialization for temperature branch 
         for i in range(len(self.layers_temp)-1):
             nn.init.xavier_normal_(self.linears_temp[i].weight.data, gain=1.0)
             # set biases to zero
@@ -54,23 +54,14 @@ class fcn(nn.Module):
         if torch.is_tensor(x) != True:         
             x = torch.from_numpy(x)                
             
-        # u_b = torch.from_numpy(ub).float().to(device)
-        # l_b = torch.from_numpy(lb).float().to(device)
-                        
-        # #preprocessing input 
-        # x = (x - l_b)/(u_b - l_b) #feature scaling
-            
-        # #convert to float
-        # coordis = x.float()
-
         # Remain data copy for the second derivative estimation
-        lap_data=coordis.clone()
+        lap_data=x.clone()
             
         for i in range(len(self.layers_temp)-2):
-            u = self.linears_temp[i](coordis)
-            coordis = self.activation(u)
+            u = self.linears_temp[i](x)
+            x = self.activation(u)
                 
-        u = self.linears_temp[-1](coordis)
+        u = self.linears_temp[-1](x)
 
         for i in range(len(self.layers_lap)-2):                
             z = self.linears_lap[i](lap_data)
@@ -118,6 +109,6 @@ class fcn(nn.Module):
         loss_f=self.loss_PDE(x)
 
         loss_val=loss_u+loss_f
-        return loss_val
+        return loss_val,loss_u,loss_f
     
     
