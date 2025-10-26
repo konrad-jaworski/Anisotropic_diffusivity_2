@@ -2,115 +2,159 @@ import torch
 import torch.optim as optim
 from tqdm import tqdm
 import numpy as np
-from networks import fcn
-
+from networks import fcn_isotropic
+from helper_function import NormalizeData, DomainDataset, DataPointsDataset
+from torch.utils.data import DataLoader
 
 # Training parameters 
 # ----------------------------------------------------------------/
-N_epoch=100
-lr=1e-1 # Investigating larger steps
-patiance=5000
-plot_diffusion_per=1
+N_epoch=50000
+lr=1e-3
 batch_size=5000
-dataset_size=100000
+N_samples = 100000 # Number of the data points for the data loss
+#-----------------------------------------------------------------/
+
+# Physical parameters
+#-----------------------------------------------------------------/
+sampling_time=30.0 # FPS camera recording
+height=0.1 # [m] heigh of the sample
+width=0.1 # [m] width of the sample 
+thickness=0.006 # [m] thickness of sample
 #-----------------------------------------------------------------/
 
 device=torch.device("cuda" if torch.cuda.is_available() else 'cpu')
 
-data = np.load(r'E:\Heat_diffusion_laser_metadata\30_Sep_2025_06_30_29_FBH13mm_step_size_sim_step_0_002m_p1.npz', allow_pickle=True)
-data = np.array(data['data'], dtype=np.float32)
-
 # Data preprocessing
-t,y,x=data.shape
-y_center=y//2
-x_center=x//2
+#-------------------------------------------------------------------------------------------------------------/
+data = np.load(r'F:\Synthetic_data_pulse\param_fbh_size10mm_depth30pct_thickness6mm.npz', allow_pickle=True)
+data = np.array(data['data'], dtype=np.float32)
+data=torch.from_numpy(data)
 
-# We take into consideration only samller square of 100 x 100 pixels and cooling region
-spread=75
-data=data[10:,y_center-spread:y_center+spread,x_center-spread:x_center+spread]
+p_data=data+273.15 # conversion to Kelvin temperature
+p_data=p_data[4:,:,:] # Trimming sequence to 21 [s] of recording
 
-# Organiziing data in network freidly format
-Nt,Ny,Nx=data.shape
+T = p_data          # temperature data, shape (630, 512, 512)
+time,vertical,horizontal=T.shape
 
-t = torch.linspace(0, 1, Nt)
-x = torch.linspace(0, 1, Nx)
-y = torch.linspace(0, 1, Ny)
+t = torch.linspace(0, time/sampling_time, time) # [0,T_max]
+y = torch.linspace(0, height, vertical) # [0, H]
+x = torch.linspace(0, width, horizontal) # [0, W]
 
-tt, yy, xx = torch.meshgrid(t, y, x, indexing='ij')
+# Normalizing the data into region of -1 and 1
+t_norm,ub_t,lb_t=NormalizeData(t)
+y_norm,ub_y,lb_y=NormalizeData(y)
+x_norm,ub_x,lb_x=NormalizeData(x)
+T_norm,ub_T,lb_T=NormalizeData(T)
 
-coords = torch.stack([tt, yy,xx], dim=-1)  # shape (399, 100, 100, 3)
-coords = coords.reshape(-1, 3)              # shape (399*100*100, 3)
+# Maintaining limits for reconstruction of them in PDE loss
+# Temperature scaling
+T_scale = (ub_T - lb_T) / 2.0
+scale_t = (ub_t - lb_t) / 2.0
+scale_x = (ub_x - lb_x) / 2.0
+scale_y = (ub_y - lb_y) / 2.0
+scale_z = (thickness) / 2.0 
 
-values = data.reshape(-1, 1)                   # shape (399*100*100, 1)
-values=torch.from_numpy(values)
+scales = (T_scale, scale_y, scale_x, scale_t, scale_z)
 
-# Randomly selected samples
-idx = torch.randperm(coords.shape[0])[:dataset_size]
+# Meshgrid
+t_grid, y_grid, x_grid = torch.meshgrid(t_norm, y_norm, x_norm, indexing='ij')
 
-X_train=coords[idx]
-y_train=values[idx]
+# Create mask of valid points (True = valid, False = corrupted)
+mask = torch.ones_like(T, dtype=torch.bool)
+mask[:, 150:250, 150:250] = False  # exclude this region
 
-X_train=X_train.to(device)
-y_train=y_train.to(device)
+# Apply mask to coordinates and data
+t_valid = t_grid[mask]
+y_valid = y_grid[mask]
+x_valid = x_grid[mask]
+T_valid = T_norm[mask]
 
-# Normalization of the temperature values
-y_train=(y_train-y_train.mean())/y_train.std()
+# Concatenate into coordinate tensor
+coordis_valid = torch.stack([t_valid, y_valid, x_valid], dim=1)
 
-dataset_size = X_train.shape[0]
+# Subsampling data points for the data loss
+idx = torch.randperm(coordis_valid.shape[0])[:N_samples]
 
+# We have 100_000 randomly selected data points for the data loss which are normalized all between -1 and 1 
+X_train = coordis_valid[idx].float()
+y_train = T_valid[idx].float().unsqueeze(1)
+
+data_dataset = DataPointsDataset(X_train, y_train)
+data_loader = DataLoader(data_dataset, batch_size=batch_size, shuffle=True, num_workers=0,drop_last=True)
+
+#-------------------------------------------------------------------------------------------------------------/
+# Data processing for the PDE loss
+
+phys_dataset = DomainDataset(n_samples=N_samples, n_dim=3, method='lhs')
+phys_loader = DataLoader(phys_dataset, batch_size=batch_size, shuffle=True, num_workers=0,drop_last=True)
+
+#-------------------------------------------------------------------------------------------------------------/
 
 # Parameters determining network architecture
-layers_temp = np.array([3,30,30,30,30,30,30,30,30,1]) #8 hidden layers
-layer_lap=np.array([3,20,20,1])
+layers_temp = np.array([3,30,30,30,30,30,30,30,30,1]) # 8 hidden layers
+layer_lap=np.array([3,20,20,1]) # 2 hidden layers
 
 # Network definition
-PINN=fcn(layers_temp,layer_lap)
+PINN=fcn_isotropic(layers_temp,layer_lap)
 PINN=PINN.to(device)
 
 # Optimizer
 optimizer=optim.Adam(PINN.parameters(),lr=lr)
 
-
-# Logging purposes
+#-------------------------------------------------------------------------------------------------------------/
+# Training loop
 epoch_avg_losses=[]
 data_avg_losses=[]
 physics_avg_losses=[]
 
+n_batches = min(len(data_loader), len(phys_loader))
+
 for epoch in range(N_epoch):
     PINN.train()
-    perm = torch.randperm(dataset_size)
-    epoch_loss = 0.0
-    data_loss = 0.0
-    physics_loss = 0.0
+    running_total = 0.0
+    running_data = 0.0
+    running_phys = 0.0
 
-    with tqdm(range(0, dataset_size, batch_size), desc=f"Epoch {epoch+1}/{N_epoch}", leave=False) as batch_bar:
-        for j in batch_bar:
-            idx = perm[j:j + batch_size]
-            X_batch = X_train[idx]
-            y_batch = y_train[idx]
+    for (X_data_batch, y_data_batch), X_phys_batch in zip(data_loader, phys_loader):
+        X_data_batch = X_data_batch.to(device)
+        y_data_batch = y_data_batch.to(device)
+        X_phys_batch = X_phys_batch.to(device)
 
-            optimizer.zero_grad()
-            loss, loss_data, loss_physics = PINN.loss(X_batch, y_batch)
-            loss.backward()
-            optimizer.step()
 
-            epoch_loss += loss.item()
-            data_loss += loss_data.item()
-            physics_loss += loss_physics.item()
+        optimizer.zero_grad()
 
-            batch_bar.set_postfix({
-                "Loss": f"{loss.item():.3e}",
-                "Data": f"{loss_data.item():.3e}",
-                "PDE": f"{loss_physics.item():.3e}"
-            })
+        loss,loss_u,loss_f=PINN.loss(X_data_batch,y_data_batch,X_phys_batch,scales)
+        loss.backward()
+        optimizer.step()
 
-    num_batches = int(np.ceil(dataset_size / batch_size))
-    epoch_avg_losses.append(epoch_loss / num_batches)
-    data_avg_losses.append(data_loss / num_batches)
-    physics_avg_losses.append(physics_loss / num_batches)
+        running_total += loss.item()
+        running_data += loss_u.item()
+        running_phys += loss_f.item()
 
-print(f'Total_loss at start:{epoch_avg_losses[0]} | Total_loss at the end:{epoch_avg_losses[-1]}')
-print(f'Data_loss at start:{data_avg_losses[0]} | Data_loss at the end:{data_avg_losses[-1]}')
-print(f'Physics_loss at start:{physics_avg_losses[0]} | Physics_loss at the end:{physics_avg_losses[-1]}')
+    # average over batches in this epoch
+    avg_total = running_total / n_batches
+    avg_data = running_data / n_batches
+    avg_phys = running_phys / n_batches
 
-print(f'Diffusivity at x:{PINN.a_x} | Diffusivity at y:{PINN.a_y} | Diffusivity at z:{PINN.a_z} | ')
+    epoch_avg_losses.append(avg_total)
+    data_avg_losses.append(avg_data)
+    physics_avg_losses.append(avg_phys)
+
+    if (epoch % 10 == 0) or (epoch == N_epoch-1):
+            print(f"Epoch {epoch:04d}  Total={avg_total:.6e}  Data={avg_data:.6e}  Phys={avg_phys:.6e}  a={PINN.a.item():.3e}")
+
+if len(epoch_avg_losses) > 0:
+    print(f"Total_loss at start: {epoch_avg_losses[0]:.6e} | Total_loss at end: {epoch_avg_losses[-1]:.6e}")
+    print(f"Data_loss  at start: {data_avg_losses[0]:.6e} | Data_loss  at end: {data_avg_losses[-1]:.6e}")
+    print(f"Phys_loss  at start: {physics_avg_losses[0]:.6e} | Phys_loss  at end: {physics_avg_losses[-1]:.6e}")
+else:
+    print("No logged losses.")
+
+
+torch.save(PINN.state_dict(), "model_weights.pth")
+torch.save(epoch_avg_losses,"Total_loss.pth")
+torch.save(data_avg_losses,"Data_loss.pth")
+torch.save(physics_avg_losses,"Physic_loss.pth")
+
+
+print(f"Learned diffusivity a = {PINN.a.item():.6e} [m^2/s] ")
