@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../Desktop/Pulse_data_sample/Synthetic_data/Uniform_heating/Batch_1/2025.06.27 - param_study_fbh_size_depth_thickness/param_fbh_size10mm_depth30pct_thickness6mm"
+		},
+		{
+			"path": "../Desktop/Pulse_data_sample/Synthetic_data/Gaussian_heating/2025.07.15_gaussian_heat_param_study_fbh_size_depth_thickness/param_fbh_gaussian_size10mm_depth10pct_thickness4mm"
+		},
+		{
+			"path": "../Desktop/PINN_data"
+		},
+		{
+			"path": "../Desktop/Pulse_data_sample"
+		}
+	],
+	"settings": {}
+}
