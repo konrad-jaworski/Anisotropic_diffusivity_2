@@ -39,8 +39,9 @@ class fcn_plane(nn.Module):
             nn.init.zeros_(layer.bias)
 
         # Inverse parameter (thermal conductivity)
-        self.k = nn.Parameter(torch.tensor([1.0], dtype=torch.float32))
-
+        # self.k = nn.Parameter(torch.tensor([1.0], dtype=torch.float32))
+        # self.k = nn.Parameter(torch.randn(1))
+        self.k = nn.Parameter(torch.empty(1).uniform_(0, 5))
     def forward(self, x):
         # Input shape: [N, 3]  => [t, y, x]
         if not torch.is_tensor(x):
