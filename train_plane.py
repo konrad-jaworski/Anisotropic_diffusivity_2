@@ -7,14 +7,16 @@ from helper_function import NormalizeData, DomainDataset, DataPointsDataset
 from torch.utils.data import DataLoader
 from scipy.stats import qmc
 
-device=torch.device("cuda" if torch.cuda.is_available() else 'cpu')
+device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Training parameters
 #--------------------------------------------------------------------/
-N_epoch=10000
-lr=1e-4
-batch_size=100
-N_samples = 100000 
+N_epoch=10
+lr=1e-3
+lr2=1e-2
+batch_size=10
+N_samples = 100 
+alpha=0.12
 #--------------------------------------------------------------------/
 
 # Physical parameters of the sample
@@ -33,7 +35,7 @@ q=1600.0 # [kg/m^3] Density of the material
 
 # Data preprocessing
 #--------------------------------------------------------------------/
-data = np.load(r'F:\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz', allow_pickle=True)
+data = np.load(r'F:\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic.npz', allow_pickle=True)
 
 # Trimming the data and converting them to Kelvins
 data=data['data'][frame_of_max_temp:,:,:]+275.15 # Converting to kelvins
@@ -118,51 +120,59 @@ ic_dataset=DataPointsDataset(X_ic,Y_ic)
 bc_dataset=DataPointsDataset(X_bc,Y_bc)
 
 
-data_loader = DataLoader(data_dataset,batch_size=batch_size,shuffle=True,num_workers=2)
-phys_loader = DataLoader(phys_dataset, batch_size=batch_size, shuffle=True, num_workers=2)
-ic_loader = DataLoader(ic_dataset,batch_size=batch_size, shuffle=True, num_workers=2)
-bc_loader = DataLoader(bc_dataset,batch_size=batch_size, shuffle=True, num_workers=2)
+data_loader = DataLoader(data_dataset,batch_size=batch_size,shuffle=True,num_workers=2,pin_memory=True)
+phys_loader = DataLoader(phys_dataset, batch_size=batch_size, shuffle=True, num_workers=2,pin_memory=True)
+ic_loader = DataLoader(ic_dataset,batch_size=batch_size, shuffle=True, num_workers=2,pin_memory=True)
+bc_loader = DataLoader(bc_dataset,batch_size=batch_size, shuffle=True, num_workers=2,pin_memory=True)
 
 #--------------------------------------------------------------------/
 
 
 # Network and optimizer initialization
 #--------------------------------------------------------------------/
-layers= np.array([3,30,30,30,30,30,30,30,30,1]) # 8 hidden layers
+layers= np.array([3,50,50,50,50,50,1]) # 8 hidden layers
 
 # Network definition
 PINN=fcn_plane(layers,q,Cp,t_scale,x_scale,y_scale)
-PINN=PINN.to(device)
+PINN=PINN.to(device,non_blocking=True)
 
-optimizer = torch.optim.Adam(list(PINN.parameters()),lr=lr)
+optimizer_1 = torch.optim.Adam(PINN.parameters(),lr=lr)
 #--------------------------------------------------------------------/
+# Logging variables
 epoch_avg_losses=[]
 data_avg_losses=[]
 physics_avg_losses=[]
 ic_avg_losses=[]
 bc_avg_losses=[]
 
+
 n_batches = min(len(data_loader), len(phys_loader), len(ic_loader), len(bc_loader))
+
+iters=0
+PINN.train()
+
+shared_parameters=list(PINN.parameters())[-2]
+
 if __name__ == "__main__":
     for epoch in range(N_epoch):
-        PINN.train()
         running_total = 0.0
         running_data = 0.0
         running_phys = 0.0
         running_ic=0.0
         running_bc=0.0
 
+        # load data
         for (X_data_batch, y_data_batch), X_phys_batch,(X_ic_batch, y_ic_batch),(X_bc_batch,y_bc_batch) in zip(data_loader, phys_loader,ic_loader,bc_loader):
-            X_data_batch = X_data_batch.to(device)
-            y_data_batch = y_data_batch.to(device)
-            X_phys_batch = X_phys_batch.to(device)
-            X_ic_batch=X_ic_batch.to(device)
-            y_ic_batch=y_ic_batch.to(device)
-            X_bc_batch=X_bc_batch.to(device)
-            y_bc_batch=y_bc_batch.to(device)
+            X_data_batch = X_data_batch.to(device,non_blocking=True)
+            y_data_batch = y_data_batch.to(device,non_blocking=True)
+            X_phys_batch = X_phys_batch.to(device,non_blocking=True)
+            X_ic_batch=X_ic_batch.to(device,non_blocking=True)
+            y_ic_batch=y_ic_batch.to(device,non_blocking=True)
+            X_bc_batch=X_bc_batch.to(device,non_blocking=True)
+            y_bc_batch=y_bc_batch.to(device,non_bloking=True)
 
-            optimizer.zero_grad()
-            loss,loss_data,loss_phys,loss_bc,loss_ic=PINN.loss(X_data_batch,y_data_batch,
+           # Forward pass on all losses
+            loss_total,loss_data,loss_phys,loss_bc,loss_ic=PINN.loss(X_data_batch,y_data_batch,
                                         X_bc_batch,
                                         y_bc_batch,
                                         X_ic_batch,
@@ -170,10 +180,69 @@ if __name__ == "__main__":
                                         X_phys_batch
                                         )
             
-            loss.backward()
-            optimizer.step()
+            loss=torch.stack([loss_data,loss_phys,loss_bc,loss_ic])
+            
 
-            running_total += loss.item()
+            # Initialization for GradNorm
+            if iters == 0:
+                # init weights
+                weights = torch.ones_like(loss)
+                weights = torch.nn.Parameter(weights)
+                T = weights.sum().detach() # sum of weights
+                # set optimizer for weights
+                optimizer_2 = torch.optim.Adam([weights], lr=lr2)
+                # set L(0)
+                l0 = loss.detach()
+            
+
+            # computing weighted loss
+            weighted_loss=weights@loss
+
+            # Clrearing gradients of network
+            optimizer_1.zero_grad()
+
+            weighted_loss.backward(retain_graph=True)
+            # Computing gradients norms
+            gw=[]
+            for i in range(len(loss)):
+                dl=torch.autograd.grad(weights[i]*loss[i],shared_parameters,retain_graph=True,create_graph=True)[0]
+                gw.append(torch.norm(dl))
+            gw=torch.stack(gw)
+
+            # Computing loss ratio per task
+            loss_ratio=loss.detach()/l0
+
+            # Compute relative inverse training rate per task
+            rt=loss_ratio/loss_ratio.mean()
+
+            # Computing the average gradient norm
+            gw_Avg=gw.mean().detach()
+
+            # Computing target gradient norms
+            constant=(gw_Avg*rt**alpha).detach() # This i really like since it allows to actually remove it from gradient computation
+            
+            # Compute gradnomr loss
+            gradnorm_loss=torch.abs(gw-constant).sum()
+
+            # Clear gradients of weights
+            optimizer_2.zero_grad()
+
+            # Backward pass for gradnorm loss
+            gradnorm_loss.backward()
+
+            # Update model weights
+            optimizer_1.step()
+
+            # Update loss weights
+            optimizer_2.step()
+
+            # Renormalize weights
+            weights=(weights/weights.sum()*T).detach()
+            weights=torch.nn.Parameter(weights)
+            optimizer_2=torch.optim.Adam([weights], lr=lr2)
+
+            # Update of iters
+            running_total += loss_total.item()
             running_data += loss_data.item()
             running_phys += loss_phys.item()
             running_bc+=loss_bc.item()
@@ -192,5 +261,5 @@ if __name__ == "__main__":
         ic_avg_losses.append(avg_ic)
         bc_avg_losses.append(avg_bc)
 
-        if (epoch % 10 == 0) or (epoch == N_epoch-1):
+        if (epoch % 1 == 0) or (epoch == N_epoch-1):
                 print(f"Epoch {epoch:04d}  Total={avg_total:.6e}  Data={avg_data:.6e}  Phys={avg_phys:.6e} IC={avg_ic:.6e} BC={avg_bc:.6e}  k={PINN.k.item():.3e}")
