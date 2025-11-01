@@ -4,12 +4,12 @@ import torch.nn as nn
 torch.manual_seed(42)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-class fcn_plane(nn.Module):
+class FCN(nn.Module):
     """
     Network used for prediction of thermal conductivity of the isotropic material with measurments from its surface.
     """
-    def __init__(self, layers, density, specific_heat, time_scale, x_scale, y_scale):
-        super(fcn_plane, self).__init__()
+    def __init__(self, layers, density, specific_heat, time_scale, y_scale, x_scale):
+        super(FCN, self).__init__()
 
         # Layers structure
         self.layers = layers
@@ -39,9 +39,8 @@ class fcn_plane(nn.Module):
             nn.init.zeros_(layer.bias)
 
         # Inverse parameter (thermal conductivity)
-        # self.k = nn.Parameter(torch.tensor([1.0], dtype=torch.float32))
-        # self.k = nn.Parameter(torch.randn(1))
-        self.k = nn.Parameter(torch.empty(1).uniform_(0, 5))
+        self.k = nn.Parameter(torch.tensor([5.0], dtype=torch.float32))
+    
     def forward(self, x):
         # Input shape: [N, 3]  => [t, y, x]
         if not torch.is_tensor(x):
@@ -88,19 +87,10 @@ class fcn_plane(nn.Module):
         # Initial condition loss function
         return self.loss_function(self(x_ic),y_bc)
 
-
     def Data_loss(self, x_data, y_data):
         # Data loss concerned with the actual data measurments
         return self.loss_function(self(x_data), y_data)
 
-    def loss(self, x_data, y_data, x_bc, y_bc,x_ic,y_ic, x_pde):
-        # Total loss calculations
-        loss_data = self.Data_loss(x_data, y_data)
-        loss_phys = self.PDE_loss(x_pde)
-        loss_bc = self.BC_loss(x_bc, y_bc)
-        loss_ic=self.IC_loss(x_ic,y_ic)
-        total_loss = loss_data + loss_phys + loss_bc + loss_ic
-        return total_loss,loss_data,loss_phys,loss_bc,loss_ic
     
 
 

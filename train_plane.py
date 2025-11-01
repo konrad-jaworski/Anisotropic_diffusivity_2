@@ -26,7 +26,7 @@ height=0.1 # [m] heigh of the sample
 width=0.1 # [m] width of the sample 
 thickness=0.005 # [m] thickness of sample
 
-frame_of_max_temp=34 # Frame index corresponding to the maximum temperature, so we only analyze the cooling phase
+frame_of_max_temp=304 # Frame index corresponding to the maximum temperature, so we only analyze the cooling phase
 
 target_conductivity=2.0 # [W/(m*K)] Target conductivity of isotropic case
 Cp=700.0 # [J/(kg*K)] Specific heat of the material
