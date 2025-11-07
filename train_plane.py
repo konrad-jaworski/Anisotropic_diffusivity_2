@@ -14,8 +14,8 @@ device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 N_epoch=10
 lr=1e-3
 lr2=1e-2
-batch_size=10
-N_samples = 100 
+batch_size=100
+N_samples = 10000 
 alpha=0.12
 #--------------------------------------------------------------------/
 
@@ -35,7 +35,7 @@ q=1600.0 # [kg/m^3] Density of the material
 
 # Data preprocessing
 #--------------------------------------------------------------------/
-data = np.load(r'F:\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic.npz', allow_pickle=True)
+data = np.load(r'/Volumes/KINGSTON/Synthetic_data_no_defect/2025_10_24_sample_100x100x5mm_no_defect_isotropic.npz', allow_pickle=True)
 
 # Trimming the data and converting them to Kelvins
 data=data['data'][frame_of_max_temp:,:,:]+275.15 # Converting to kelvins
