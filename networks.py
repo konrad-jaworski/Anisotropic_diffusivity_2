@@ -1,27 +1,17 @@
 import torch
 import torch.nn as nn
 
-torch.manual_seed(42)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 class FCN(nn.Module):
     """
-    Network used for prediction of thermal conductivity of the isotropic material with measurments from its surface.
+    Network used for prediction of thermal diffusivity of the isotropic material with measurments from its surface.
     """
-    def __init__(self, layers, density, specific_heat, time_scale, y_scale, x_scale):
+    def __init__(self, layers):
         super(FCN, self).__init__()
 
         # Layers structure
         self.layers = layers
-
-        # Physical parameters
-        self.q = density
-        self.Cp = specific_heat
-
-        # Normalization scales
-        self.t_scale = time_scale
-        self.x_scale = x_scale
-        self.y_scale = y_scale
 
         # Activation and loss
         self.activation = nn.Tanh()
@@ -38,8 +28,8 @@ class FCN(nn.Module):
             nn.init.xavier_normal_(layer.weight)
             nn.init.zeros_(layer.bias)
 
-        # Inverse parameter (thermal conductivity)
-        self.k = nn.Parameter(torch.tensor([5.0], dtype=torch.float32))
+        # Inverse parameter (thermal diffusivity)
+        self.a = nn.Parameter(torch.tensor([1e-3], dtype=torch.float32))
     
     def forward(self, x):
         # Input shape: [N, 3]  => [t, y, x]
@@ -53,6 +43,7 @@ class FCN(nn.Module):
 
     def PDE_loss(self, x_pde):
         # x_pde: [N, 3] → [t, y, x]
+        # Here we are using collocation points which specificic sampling in the domain
         x_pde.requires_grad_(True)
         u = self(x_pde)
 
@@ -68,28 +59,17 @@ class FCN(nn.Module):
         u_yy = grads2_y[:, 1:2]
         u_xx = grads2_x[:, 2:3]
 
-        # Scale derivatives back to physical units (assuming normalization)
-        u_t_phys = u_t / self.t_scale
-        u_xx_phys = u_xx / (self.x_scale ** 2)
-        u_yy_phys = u_yy / (self.y_scale ** 2)
-
-        # PDE residual: ρ·Cp·∂T/∂t - k(∂²T/∂x² + ∂²T/∂y²)
-        f = self.q * self.Cp * u_t_phys - self.k * (u_xx_phys + u_yy_phys)
+        # PDE residual:
+        f =  u_t - self.a * (u_xx + u_yy)
         loss_phys = torch.mean(f ** 2)
 
         return loss_phys
 
-    def BC_loss(self, x_bc, y_bc):
-        # Boundary condition loss function
-        return self.loss_function(self(x_bc), y_bc)
-    
-    def IC_loss(self,x_ic,y_bc):
-        # Initial condition loss function
-        return self.loss_function(self(x_ic),y_bc)
-
     def Data_loss(self, x_data, y_data):
-        # Data loss concerned with the actual data measurments
+        # Data loss function
         return self.loss_function(self(x_data), y_data)
+
+    
 
     
 
