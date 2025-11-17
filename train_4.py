@@ -21,7 +21,7 @@ n_ic=1024
 
 # Grad norm parameters
 lr2=1e-3
-alpha=0.36
+alpha=0.24
 gradnorm_mode=True # Flag to activate GradNorm
 
 # Weight value
@@ -161,7 +161,7 @@ for epoch in tqdm(range(N_epoch)):
         # compute the weighted loss
         weighted_loss = weights @ losses
         # clear gradients of network
-        optimizer_1.zero_grad()
+        # optimizer_1.zero_grad()
         # backward pass for weigthted task loss
         weighted_loss.backward(retain_graph=True)
 
