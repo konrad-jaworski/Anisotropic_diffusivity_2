@@ -11,8 +11,9 @@ device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Training parameters
 #--------------------------------------------------------------------/
-N_epoch=1000000
+N_epoch=1500
 lr=1e-4
+N_run=100
 
 # Number of samples
 n_coll=2048
@@ -20,7 +21,7 @@ n_bc=1024
 n_ic=1024
 
 # Grad norm parameters
-lr2=1e-3
+lr2=1e-2
 alpha=0.24
 gradnorm_mode=True # Flag to activate GradNorm
 
@@ -31,7 +32,7 @@ target_diffusivity=2.0/(700.0*1600.0) # Target thermal diffusivity
 
 # Data preprocessing
 #--------------------------------------------------------------------/
-data = np.load(r'F:\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz', allow_pickle=True)
+data = np.load(r'/Volumes/KINGSTON/Synthetic_data_no_defect/2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz', allow_pickle=True)
 
 
 data_cube = torch.tensor(data['data'][34:,:,:], dtype=torch.float32)
@@ -95,129 +96,142 @@ N_total_bc = X_bc.shape[0]
 
 coll_data=DomainDataset(n_samples=n_coll,n_dim=3,method='sobol')
 #--------------------------------------------------------------------/
-# Definition of the network
-layers=[3,50,50,50,50,1]
-PINN=FCN(layers)
-PINN=PINN.cuda() # Moving model to GPU
+# Logging diffusivity estimation
+log_a=[]
+run_iter=0
 
-# Layers to apply GradNorm
-shared_layer=list(PINN.linears[0].parameters())
+while run_iter<=N_run:
 
-# Logging
-log_weights=[]
-log_loss_total=[]
-log_loss_data=[]
-log_loss_phys=[]
+    # Definition of the network
+    layers=[3,50,50,50,50,1]
+    PINN=FCN(layers)
+    PINN=PINN.to(device) # Moving model to GPU
 
-# Setting up the optimizer
-optimizer_1=optim.Adam(PINN.parameters(),lr=lr) # Optimizer for the network
-scheduler = ExponentialLR(optimizer_1, gamma=0.95)
-iters=0
+    # Layers to apply GradNorm
+    shared_layer=list(PINN.linears[0].parameters())
 
-PINN.train()
+    # Logging
+    log_weights=[]
+    log_loss_total=[]
+    log_loss_data=[]
+    log_loss_phys=[]
 
-for epoch in tqdm(range(N_epoch)):
-    # Data points for this epoch
-    indices_bc = torch.randperm(N_total_bc)[:n_bc]
-    X_bc_sampled = X_bc[indices_bc]
-    Y_bc_sampled = Y_bc[indices_bc]
+    # Setting up the optimizer
+    optimizer_1=optim.Adam(PINN.parameters(),lr=lr) # Optimizer for the network
+    scheduler = ExponentialLR(optimizer_1, gamma=0.95)
+    iters=0
 
-    X_bc_sampled = X_bc_sampled.to(device)
-    Y_bc_sampled = Y_bc_sampled.to(device)  
+    PINN.train()
 
-    indices_ic = torch.randperm(N_total_ic)[:n_ic]
-    X_ic_sampled = X_ic[indices_ic]
-    Y_ic_sampled = Y_ic[indices_ic]
+    for epoch in tqdm(range(N_epoch)):
+        # Data points for this epoch
+        indices_bc = torch.randperm(N_total_bc)[:n_bc]
+        X_bc_sampled = X_bc[indices_bc]
+        Y_bc_sampled = Y_bc[indices_bc]
 
-    X_ic_sampled = X_ic_sampled.to(device)
-    Y_ic_sampled = Y_ic_sampled.to(device)
+        X_bc_sampled = X_bc_sampled.to(device)
+        Y_bc_sampled = Y_bc_sampled.to(device)  
 
-    # Collocation points for PDE residual
-    x_coll=coll_data.resample()
-    x_coll = x_coll.to(device)
+        indices_ic = torch.randperm(N_total_ic)[:n_ic]
+        X_ic_sampled = X_ic[indices_ic]
+        Y_ic_sampled = Y_ic[indices_ic]
 
-    optimizer_1.zero_grad()
-        
-    # Compute losses conditionally
-    loss_bc=PINN.Data_loss(X_bc_sampled,Y_bc_sampled)
-    loss_ic=PINN.Data_loss(X_ic_sampled,Y_ic_sampled)
-    loss_data=loss_bc+loss_ic
-    loss_phys=PINN.PDE_loss(x_coll)
+        X_ic_sampled = X_ic_sampled.to(device)
+        Y_ic_sampled = Y_ic_sampled.to(device)
 
-    losses=torch.stack([loss_data,loss_phys])
-    if gradnorm_mode:
-        # Initialization for GradNorm
-        if iters == 0:
-            print("GradNorm activated")
-            # init weights
-            weights=torch.ones_like(losses)
-            weights=torch.nn.Parameter(weights)
-            T=weights.sum().detach() # sum of weights
-            # set optimizer for weights
-            optimizer_2=torch.optim.Adam([weights],lr=lr2)
-            # set L(0)
-            l0=losses.detach()
+        # Collocation points for PDE residual
+        x_coll=coll_data.resample()
+        x_coll = x_coll.to(device)
 
-        # compute the weighted loss
-        weighted_loss = weights @ losses
-        # clear gradients of network
-        # optimizer_1.zero_grad()
-        # backward pass for weigthted task loss
-        weighted_loss.backward(retain_graph=True)
+        optimizer_1.zero_grad()
+            
+        # Compute losses conditionally
+        loss_bc=PINN.Data_loss(X_bc_sampled,Y_bc_sampled)
+        loss_ic=PINN.Data_loss(X_ic_sampled,Y_ic_sampled)
+        loss_data=loss_bc+loss_ic
+        loss_phys=PINN.PDE_loss(x_coll)
 
-        # compute the L2 norm of the gradients for each task
-        gw = []
-        for i in range(len(losses)):
-            dl = torch.autograd.grad(weights[i]*losses[i], shared_layer, retain_graph=True, create_graph=True)[0]
-            gw.append(torch.norm(dl))
-        gw = torch.stack(gw)
+        losses=torch.stack([loss_data,loss_phys])
+        if gradnorm_mode:
+            # Initialization for GradNorm
+            if iters == 0:
+                print("GradNorm activated")
+                # init weights
+                weights=torch.ones_like(losses)
+                weights=torch.nn.Parameter(weights)
+                T=weights.sum().detach() # sum of weights
+                # set optimizer for weights
+                optimizer_2=torch.optim.Adam([weights],lr=lr2)
+                # set L(0)
+                l0=losses.detach()
 
-        # compute loss ratio per task
-        loss_ratio = losses.detach() / l0
-        # compute the relative inverse training rate per task
-        rt = loss_ratio / loss_ratio.mean()
-        # compute the average gradient norm
-        gw_avg = gw.mean().detach()
+            # compute the weighted loss
+            weighted_loss = weights @ losses
+            # clear gradients of network
+            # optimizer_1.zero_grad()
+            # backward pass for weigthted task loss
+            weighted_loss.backward(retain_graph=True)
 
-        # compute the GradNorm loss
-        constant = (gw_avg * rt ** alpha).detach()
-        gradnorm_loss = torch.abs(gw - constant).sum()
-        # clear gradients of weights
-        optimizer_2.zero_grad()
-        # backward pass for GradNorm
-        gradnorm_loss.backward()
+            # compute the L2 norm of the gradients for each task
+            gw = []
+            for i in range(len(losses)):
+                dl = torch.autograd.grad(weights[i]*losses[i], shared_layer, retain_graph=True, create_graph=True)[0]
+                gw.append(torch.norm(dl))
+            gw = torch.stack(gw)
 
-        # update model weights
-        optimizer_1.step()
-        scheduler.step() 
-        # update loss weights
-        optimizer_2.step()
+            # compute loss ratio per task
+            loss_ratio = losses.detach() / l0
+            # compute the relative inverse training rate per task
+            rt = loss_ratio / loss_ratio.mean()
+            # compute the average gradient norm
+            gw_avg = gw.mean().detach()
 
-        # renormalize weights
-        weights = (weights / weights.sum() * T).detach()
-        weights = torch.nn.Parameter(weights)
-        optimizer_2 = torch.optim.Adam([weights], lr=lr2)
-        # update iters
-        iters += 1
+            # compute the GradNorm loss
+            constant = (gw_avg * rt ** alpha).detach()
+            gradnorm_loss = torch.abs(gw - constant).sum()
+            # clear gradients of weights
+            optimizer_2.zero_grad()
+            # backward pass for GradNorm
+            gradnorm_loss.backward()
 
-    else:
-        loss = z*loss_data + (1-z)*loss_phys
-        if loss != 0.0:
-            loss.backward()
+            # update model weights
             optimizer_1.step()
+            # scheduler step
+            scheduler.step() 
+            # update loss weights
+            optimizer_2.step()
 
-    # logging
-    log_loss_total.append((loss_data.item()+loss_phys.item()))
-    log_loss_data.append(loss_data.item())
-    log_loss_phys.append(loss_phys.item())
+            # renormalize weights
+            weights = (weights / weights.sum() * T).detach()
+            weights = torch.nn.Parameter(weights)
+            optimizer_2 = torch.optim.Adam([weights], lr=lr2)
+            # update iters
+            iters += 1
 
-    if epoch % 100 == 0 or epoch == N_epoch - 1:
-        print(
-            f"Epoch {epoch:4d} | "
-            f"Data Loss = {loss_data.item():.6f} | "
-            f"Physics Loss = {loss_phys.item():.6f} | "
-            f"a = {PINN.a.item():.6e}"
-        )
+        else:
+            loss = z*loss_data + (1-z)*loss_phys
+            if loss != 0.0:
+                loss.backward()
+                optimizer_1.step()
+
+        # logging
+        log_loss_total.append((loss_data.item()+loss_phys.item()))
+        log_loss_data.append(loss_data.item())
+        log_loss_phys.append(loss_phys.item())
+
+        if epoch % 10 == 0 or epoch == N_epoch - 1:
+            print(
+                f"Epoch {epoch:4d} | "
+                f"Data Loss = {loss_data.item():.6f} | "
+                f"Physics Loss = {loss_phys.item():.6f} | "
+                f"a = {PINN.a.item():.6e}"
+            )
+    if PINN.a.item()>0:
+        log_a.append(PINN.a.item())
+        run_iter=run_iter+1
+        print(f'Starting run {run_iter+1}')
+
+torch.save(log_a,"diffusivity_ensamble_estimation_10xlower.pth")
 
 
 
