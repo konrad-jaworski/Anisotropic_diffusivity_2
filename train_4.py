@@ -12,17 +12,17 @@ device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Training parameters
 #--------------------------------------------------------------------/
 N_epoch=10000
-lr=1e-3
+lr=1e-4
 N_run=1
 
 # Number of samples
-n_coll=2048 # collocation points
-n_bc=1024 # boundary condition points
-n_ic=1024 # Initial condition points
+n_coll=8192 # collocation points
+n_bc=4096 # boundary condition points
+n_ic=4096 # Initial condition points
 
 # Grad norm parameters
 lr2=1e-2 # Learning rate for grad norm
-alpha=0.26 # assymetry parameter
+alpha=0.9 # assymetry parameter
 gradnorm_mode=True # Flag to activate GradNorm
 
 # Weight value of the physic loss when grad norm is deactivated
@@ -32,7 +32,7 @@ target_diffusivity=5.0/(700.0*1600.0) # Target thermal diffusivity
 
 # Data preprocessing
 #--------------------------------------------------------------------/
-data = np.load(r'/Volumes/KINGSTON/Synthetic_data_no_defect/2025_11_18_sample_100x100x5mm_no_defect_isotropic_gaussian_heat_no_conv_cond_5.npz', allow_pickle=True)
+data = np.load(r'F:\Synthetic_data_no_defect\2025_11_18_sample_100x100x5mm_no_defect_isotropic_gaussian_heat_no_conv_cond_5.npz', allow_pickle=True)
 
 
 data_cube = torch.tensor(data['data'][34:,:,:], dtype=torch.float32)
@@ -109,7 +109,7 @@ run_iter=0
 while run_iter<=N_run:
 
     # Definition of the network
-    layers=[3,100,100,100,100,1]
+    layers=[3,50,50,50,50,1]
     PINN=FCN(layers)
     PINN=PINN.to(device) # Moving model to GPU
 
@@ -135,15 +135,9 @@ while run_iter<=N_run:
         X_bc_sampled = X_bc[indices_bc]
         Y_bc_sampled = Y_bc[indices_bc]
 
-        # X_bc_sampled = X_bc_sampled.to(device)
-        # Y_bc_sampled = Y_bc_sampled.to(device)  
-
         indices_ic = torch.randperm(N_total_ic)[:n_ic]
         X_ic_sampled = X_ic[indices_ic]
         Y_ic_sampled = Y_ic[indices_ic]
-
-        # X_ic_sampled = X_ic_sampled.to(device)
-        # Y_ic_sampled = Y_ic_sampled.to(device)
 
         # Collocation points for PDE residual
         x_coll=coll_data.resample()
@@ -208,6 +202,11 @@ while run_iter<=N_run:
             # update loss weights
             optimizer_2.step()
 
+
+            weight_1=weights[0].item()
+            weight_2=weights[1].item()
+
+
             # renormalize weights
             weights = (weights / weights.sum() * T).detach()
             weights = torch.nn.Parameter(weights)
@@ -229,11 +228,13 @@ while run_iter<=N_run:
         log_loss_data.append(loss_data.item())
         log_loss_phys.append(loss_phys.item())
 
-        if epoch % 10 == 0 or epoch == N_epoch - 1:
+        if epoch % 100 == 0 or epoch == N_epoch - 1:
             print(
                 f"Epoch {epoch:4d} | "
-                f"Data Loss = {loss_data.item():.6f} | "
-                f"Physics Loss = {loss_phys.item():.6f} | "
+                f"Data Loss = {weight_1*loss_data.item():.6f} | "
+                f"Weight 1 = {weight_1:.6f} | "
+                f"Physics Loss = {weight_2*loss_phys.item():.6f} | "
+                f"Weight 2 = {weight_2:.6f} | "
                 f"a = {PINN.a.item():.6e}"
             )
     if PINN.a.item()>0:
