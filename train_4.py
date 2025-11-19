@@ -16,13 +16,13 @@ lr=1e-4
 N_run=1
 
 # Number of samples
-n_coll=8192 # collocation points
-n_bc=4096 # boundary condition points
-n_ic=4096 # Initial condition points
+n_coll=100000 # collocation points
+n_bc=100000 # boundary condition points
+n_ic=100000 # Initial condition points
 
 # Grad norm parameters
 lr2=1e-2 # Learning rate for grad norm
-alpha=0.9 # assymetry parameter
+alpha=0.26 # assymetry parameter
 gradnorm_mode=True # Flag to activate GradNorm
 
 # Weight value of the physic loss when grad norm is deactivated
@@ -100,7 +100,7 @@ X_bc=X_bc.to(device)
 Y_bc=Y_bc.to(device)
 
 
-coll_data=DomainDataset(n_samples=n_coll,n_dim=3,method='sobol')
+coll_data=DomainDataset(n_samples=n_coll,n_dim=3,method='lhs')
 #--------------------------------------------------------------------/
 # Logging diffusivity estimation
 log_a=[]
@@ -109,7 +109,7 @@ run_iter=0
 while run_iter<=N_run:
 
     # Definition of the network
-    layers=[3,50,50,50,50,1]
+    layers=[3,50,50,50,50,50,50,1]
     PINN=FCN(layers)
     PINN=PINN.to(device) # Moving model to GPU
 
@@ -197,7 +197,7 @@ while run_iter<=N_run:
             # update model weights
             optimizer_1.step()
             # scheduler step
-            if epoch % 100 ==0:
+            if epoch % 500 ==0:
                 scheduler.step() 
             # update loss weights
             optimizer_2.step()
@@ -220,7 +220,7 @@ while run_iter<=N_run:
                 loss.backward()
                 optimizer_1.step()
                 # scheduler step
-            if epoch % 100 ==0:
+            if epoch % 250 ==0:
                 scheduler.step() 
 
         # logging
