@@ -11,28 +11,28 @@ device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Training parameters
 #--------------------------------------------------------------------/
-N_epoch=1000
-lr=1e-4
-N_run=100
+N_epoch=10000
+lr=1e-3
+N_run=1
 
 # Number of samples
-n_coll=2048
-n_bc=1024
-n_ic=1024
+n_coll=2048 # collocation points
+n_bc=1024 # boundary condition points
+n_ic=1024 # Initial condition points
 
 # Grad norm parameters
-lr2=1e-2
-alpha=0.24
+lr2=1e-2 # Learning rate for grad norm
+alpha=0.26 # assymetry parameter
 gradnorm_mode=True # Flag to activate GradNorm
 
-# Weight value
-z=0.5
+# Weight value of the physic loss when grad norm is deactivated
+z=0.1
 
-target_diffusivity=2.0/(700.0*1600.0) # Target thermal diffusivity
+target_diffusivity=5.0/(700.0*1600.0) # Target thermal diffusivity
 
 # Data preprocessing
 #--------------------------------------------------------------------/
-data = np.load(r'F:\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz', allow_pickle=True)
+data = np.load(r'/Volumes/KINGSTON/Synthetic_data_no_defect/2025_11_18_sample_100x100x5mm_no_defect_isotropic_gaussian_heat_no_conv_cond_5.npz', allow_pickle=True)
 
 
 data_cube = torch.tensor(data['data'][34:,:,:], dtype=torch.float32)
@@ -109,12 +109,12 @@ run_iter=0
 while run_iter<=N_run:
 
     # Definition of the network
-    layers=[3,50,50,50,50,1]
+    layers=[3,100,100,100,100,1]
     PINN=FCN(layers)
     PINN=PINN.to(device) # Moving model to GPU
 
     # Layers to apply GradNorm
-    shared_layer=list(PINN.linears[0].parameters())
+    shared_layer=list(PINN.linears[-1].parameters())
 
     # Logging
     log_weights=[]
@@ -203,7 +203,8 @@ while run_iter<=N_run:
             # update model weights
             optimizer_1.step()
             # scheduler step
-            scheduler.step() 
+            if epoch % 100 ==0:
+                scheduler.step() 
             # update loss weights
             optimizer_2.step()
 
@@ -215,10 +216,13 @@ while run_iter<=N_run:
             iters += 1
 
         else:
-            loss = z*loss_data + (1-z)*loss_phys
+            loss = (1-z)*loss_data + z*loss_phys
             if loss != 0.0:
                 loss.backward()
                 optimizer_1.step()
+                # scheduler step
+            if epoch % 100 ==0:
+                scheduler.step() 
 
         # logging
         log_loss_total.append((loss_data.item()+loss_phys.item()))
@@ -237,7 +241,7 @@ while run_iter<=N_run:
         run_iter=run_iter+1
         print(f'Starting run {run_iter+1}')
 
-torch.save(log_a,"diffusivity_ensamble_estimation_on_point.pth")
+torch.save(log_a,"diffusivity_ensamble_estimation_case_cond_5.pth")
 
 
 
