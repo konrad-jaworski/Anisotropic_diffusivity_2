@@ -2,6 +2,9 @@
     "folders": [
         {
             "path": ".."
+        },
+        {
+            "path": "F:/Synthetic_data_no_defect"
         }
     ]
 }

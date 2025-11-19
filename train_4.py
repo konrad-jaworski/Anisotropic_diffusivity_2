@@ -11,7 +11,7 @@ device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Training parameters
 #--------------------------------------------------------------------/
-N_epoch=1500
+N_epoch=1000
 lr=1e-4
 N_run=100
 
@@ -32,7 +32,7 @@ target_diffusivity=2.0/(700.0*1600.0) # Target thermal diffusivity
 
 # Data preprocessing
 #--------------------------------------------------------------------/
-data = np.load(r'/Volumes/KINGSTON/Synthetic_data_no_defect/2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz', allow_pickle=True)
+data = np.load(r'F:\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz', allow_pickle=True)
 
 
 data_cube = torch.tensor(data['data'][34:,:,:], dtype=torch.float32)
@@ -50,6 +50,9 @@ X_ic = torch.cat([
 ], dim=1)
 Y_ic = Y_ic.reshape(-1,1)
 N_total_ic = X_ic.shape[0]
+
+X_ic=X_ic.to(device)
+Y_ic=Y_ic.to(device)
 
 # Boundary conditions
 time = torch.linspace(0, 1, T)
@@ -93,6 +96,9 @@ Y_bc = torch.cat([Y_bc_left, Y_bc_right, Y_bc_bottom, Y_bc_top], dim=0)
 
 N_total_bc = X_bc.shape[0]
 
+X_bc=X_bc.to(device)
+Y_bc=Y_bc.to(device)
+
 
 coll_data=DomainDataset(n_samples=n_coll,n_dim=3,method='sobol')
 #--------------------------------------------------------------------/
@@ -129,15 +135,15 @@ while run_iter<=N_run:
         X_bc_sampled = X_bc[indices_bc]
         Y_bc_sampled = Y_bc[indices_bc]
 
-        X_bc_sampled = X_bc_sampled.to(device)
-        Y_bc_sampled = Y_bc_sampled.to(device)  
+        # X_bc_sampled = X_bc_sampled.to(device)
+        # Y_bc_sampled = Y_bc_sampled.to(device)  
 
         indices_ic = torch.randperm(N_total_ic)[:n_ic]
         X_ic_sampled = X_ic[indices_ic]
         Y_ic_sampled = Y_ic[indices_ic]
 
-        X_ic_sampled = X_ic_sampled.to(device)
-        Y_ic_sampled = Y_ic_sampled.to(device)
+        # X_ic_sampled = X_ic_sampled.to(device)
+        # Y_ic_sampled = Y_ic_sampled.to(device)
 
         # Collocation points for PDE residual
         x_coll=coll_data.resample()
@@ -231,7 +237,7 @@ while run_iter<=N_run:
         run_iter=run_iter+1
         print(f'Starting run {run_iter+1}')
 
-torch.save(log_a,"diffusivity_ensamble_estimation_10xlower.pth")
+torch.save(log_a,"diffusivity_ensamble_estimation_on_point.pth")
 
 
 

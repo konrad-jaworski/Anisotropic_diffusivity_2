@@ -29,7 +29,7 @@ class FCN(nn.Module):
             nn.init.zeros_(layer.bias)
 
         # Inverse parameter (thermal diffusivity)
-        self.a = nn.Parameter(torch.tensor([1e-4], dtype=torch.float32))
+        self.a = nn.Parameter(torch.tensor([1e-3], dtype=torch.float32))
     
     def forward(self, x):
         # Input shape: [N, 3]  => [t, y, x]
