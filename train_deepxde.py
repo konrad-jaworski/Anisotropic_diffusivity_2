@@ -6,7 +6,7 @@ import deepxde as dde
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ------------------- DATA LOADING -------------------
-data_path = r'/Volumes/KINGSTON/Synthetic_data_no_defect/2025_11_18_sample_100x100x5mm_no_defect_isotropic_gaussian_heat_no_conv_cond_5.npz'
+data_path = r'C:\Users\stone\Desktop\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz'
 data = np.load(data_path, allow_pickle=True)
 data_cube = data['data'][34:, :, :]  # shape [T, Y, X]
 data_cube = (data_cube - data_cube.min()) / (data_cube.max() - data_cube.min())
@@ -65,7 +65,7 @@ Y_bc = np.vstack([Y_bc_left, Y_bc_right, Y_bc_bottom, Y_bc_top])
 
 # ------------------- PDE VARIABLE -------------------
 # Trainable thermal diffusivity
-a = dde.Variable(1.0)
+a = dde.Variable(1.0e-3)
 
 # ------------------- PDE DEFINITION -------------------
 def pde(x, y):
