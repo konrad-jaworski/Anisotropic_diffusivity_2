@@ -8,3 +8,5 @@ checkpoints/
 logs/
 __pycache__/
 *.pth
+
+*.dat

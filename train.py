@@ -12,7 +12,7 @@ device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # Training parameters
 #--------------------------------------------------------------------/
 N_epoch=10000
-lr=1e-4
+lr=1e-3
 N_run=1
 
 # Number of samples
