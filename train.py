@@ -17,8 +17,8 @@ N_run=1
 
 # Number of samples
 n_coll=100000 # collocation points
-n_bc=100000 # boundary condition points
-n_ic=100000 # Initial condition points
+n_bc=50000 # boundary condition points
+n_ic=50000 # Initial condition points
 
 # Grad norm parameters
 lr2=1e-2 # Learning rate for grad norm
@@ -26,13 +26,13 @@ alpha=0.26 # assymetry parameter
 gradnorm_mode=True # Flag to activate GradNorm
 
 # Weight value of the physic loss when grad norm is deactivated
-z=0.1
+z=0.5
 
-target_diffusivity=5.0/(700.0*1600.0) # Target thermal diffusivity
+target_diffusivity=2.0/(700.0*1600.0) # Target thermal diffusivity
 
 # Data preprocessing
 #--------------------------------------------------------------------/
-data = np.load(r'F:\Synthetic_data_no_defect\2025_11_18_sample_100x100x5mm_no_defect_isotropic_gaussian_heat_no_conv_cond_5.npz', allow_pickle=True)
+data = np.load(r'/Volumes/KINGSTON/Synthetic_data_no_defect/2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz', allow_pickle=True)
 
 
 data_cube = torch.tensor(data['data'][34:,:,:], dtype=torch.float32)
@@ -100,6 +100,29 @@ X_bc=X_bc.to(device)
 Y_bc=Y_bc.to(device)
 
 
+def sample_random_data_points(data_cube, N_samples):
+    T, Y, X = data_cube.shape
+    t_idx = np.random.randint(0, T, N_samples)
+    y_idx = np.random.randint(0, Y, N_samples)
+    x_idx = np.random.randint(0, X, N_samples)
+
+    t_norm = t_idx / (T - 1)
+    y_norm = y_idx / (Y - 1)
+    x_norm = x_idx / (X - 1)
+
+    X_data = np.stack([t_norm, y_norm, x_norm], axis=1)
+    Y_data = data_cube[t_idx, y_idx, x_idx].reshape(-1,1)
+    return X_data, Y_data
+
+N_interior = 20000
+X_data_rand, Y_data_rand = sample_random_data_points(data_cube, N_interior)
+
+X_data_rand=torch.from_numpy(X_data_rand)
+X_data_rand=X_data_rand.to(device)
+
+Y_data_rand=torch.from_numpy(Y_data_rand)
+Y_data_rand=Y_data_rand.to(device)
+
 coll_data=DomainDataset(n_samples=n_coll,n_dim=3,method='lhs')
 #--------------------------------------------------------------------/
 # Logging diffusivity estimation
@@ -113,11 +136,16 @@ while run_iter<=N_run:
     PINN=FCN(layers)
     PINN=PINN.to(device) # Moving model to GPU
 
-    # Layers to apply GradNorm
-    shared_layer=list(PINN.linears[-1].parameters())
+
+    alpha_ema=0.01
+    ema_losses=None
+
+    # Layers to apply GradNorm (last layer shared between tasks)
+    shared_layer=list(PINN.linears[-1].parameters())[0]
 
     # Logging
-    log_weights=[]
+    log_weights_1=[]
+    log_weights_2=[]
     log_loss_total=[]
     log_loss_data=[]
     log_loss_phys=[]
@@ -163,8 +191,11 @@ while run_iter<=N_run:
                 # set optimizer for weights
                 optimizer_2=torch.optim.Adam([weights],lr=lr2)
                 # set L(0)
-                l0=losses.detach()
+                # l0=losses.detach()
+                # Ema variant initialization
+                ema_losses=losses.detach()
 
+            ema_losses=(1-alpha_ema)*ema_losses+alpha_ema*losses.detach()
             # compute the weighted loss
             weighted_loss = weights @ losses
             # clear gradients of network
@@ -180,7 +211,8 @@ while run_iter<=N_run:
             gw = torch.stack(gw)
 
             # compute loss ratio per task
-            loss_ratio = losses.detach() / l0
+            # loss_ratio = losses.detach() / l0
+            loss_ratio = losses.detach() / ema_losses
             # compute the relative inverse training rate per task
             rt = loss_ratio / loss_ratio.mean()
             # compute the average gradient norm
@@ -220,13 +252,15 @@ while run_iter<=N_run:
                 loss.backward()
                 optimizer_1.step()
                 # scheduler step
-            if epoch % 250 ==0:
+            if epoch % 500 ==0:
                 scheduler.step() 
 
         # logging
         log_loss_total.append((loss_data.item()+loss_phys.item()))
         log_loss_data.append(loss_data.item())
         log_loss_phys.append(loss_phys.item())
+        log_weights_1.append(weight_1)
+        log_weights_2.append(weight_2)
 
         if epoch % 100 == 0 or epoch == N_epoch - 1:
             print(
@@ -242,7 +276,7 @@ while run_iter<=N_run:
         run_iter=run_iter+1
         print(f'Starting run {run_iter+1}')
 
-torch.save(log_a,"diffusivity_ensamble_estimation_case_cond_5.pth")
+
 
 
 
