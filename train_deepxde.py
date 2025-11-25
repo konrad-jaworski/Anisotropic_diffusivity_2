@@ -9,6 +9,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 data_path = r'C:\Users\stone\Desktop\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz'
 data = np.load(data_path, allow_pickle=True)
 data_cube = data['data'][34:, :, :]  # shape [T, Y, X]
+# Normalization of the data
 data_cube = (data_cube - data_cube.min()) / (data_cube.max() - data_cube.min())
 
 T, Y, X = data_cube.shape
@@ -28,16 +29,33 @@ def sample_random_data_points(data_cube, N_samples):
     Y_data = data_cube[t_idx, y_idx, x_idx].reshape(-1,1)
     return X_data, Y_data
 
-N_interior = 20000
+N_interior = 20000 #---------------------------------------------------------------------------------------------------------------------------------------------------
 X_data_rand, Y_data_rand = sample_random_data_points(data_cube, N_interior)
 
+X_data_rand=torch.from_numpy(X_data_rand)
+X_data_rand=X_data_rand.to(device)
+
+Y_data_rand=torch.from_numpy(Y_data_rand)
+Y_data_rand=Y_data_rand.to(device)
+
+
 # ------------------- INITIAL CONDITION -------------------
-t0 = np.zeros((Y*X,1))
-y_coords = np.linspace(0,1,Y)
-x_coords = np.linspace(0,1,X)
-Y_grid, X_grid = np.meshgrid(y_coords, x_coords, indexing='ij')
-X_ic = np.hstack([t0, Y_grid.reshape(-1,1), X_grid.reshape(-1,1)])
-Y_ic = data_cube[0,:,:].reshape(-1,1)
+def sample_random_data_points_ic(data_cube,N_samples):
+    T, Y, X = data_cube.shape
+    t_idx = np.int16(np.zeros(N_samples))
+    y_idx = np.random.randint(0, Y, N_samples)
+    x_idx = np.random.randint(0, X, N_samples)
+
+   
+    y_norm = y_idx / (Y - 1)
+    x_norm = x_idx / (X - 1)
+
+    X_data = np.stack([t_idx, y_norm, x_norm], axis=1)
+    Y_data = data_cube[t_idx, y_idx, x_idx].reshape(-1,1)
+    return X_data, Y_data
+
+N_ic=20000
+X_data_ic,Y_data_ic=sample_random_data_points_ic(data_cube,N_ic)
 
 # ------------------- BOUNDARY CONDITION -------------------
 time_coords = np.linspace(0,1,T)
