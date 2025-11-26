@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from scipy.stats import qmc
 
-class DomainDataset(torch.utils.data.Dataset):
+class DomainDataset:
     """
     Provides collocation points for PINN PDE training.
     Supports Sobol, Latin Hypercube, or uniform random sampling.
@@ -35,17 +35,7 @@ class DomainDataset(torch.utils.data.Dataset):
         self.samples = samples
         return samples
 
-    # For DataLoader support
-    def __len__(self):
-        return self.n_samples
-
-    def __getitem__(self, idx):
-        return self.samples[idx]
-
-    
-
-
-class DataGeneration(torch.utils.data.Dataset):
+class DataGeneration:
     def __init__(self,data_cube,n_interrior=None,n_initial=None,n_boundary=None):
         # With normalization of temperature in place
         self.data_cube=(data_cube-data_cube.min())/(data_cube.max()-data_cube.min())
@@ -82,10 +72,10 @@ class DataGeneration(torch.utils.data.Dataset):
 
         if self.n_interior != None:
             X_data=torch.concatenate([X_data_rand,X_data_ic,X_data_bc],dim=0)
-            Y_data=torch.concatenate([Y_data_rand,Y_data_ic,X_data_bc],dim=0)
+            Y_data=torch.concatenate([Y_data_rand,Y_data_ic,Y_data_bc],dim=0)
         elif self.n_interior == None:
             X_data=torch.concatenate([X_data_ic,X_data_bc],dim=0)
-            Y_data=torch.concatenate([Y_data_ic,X_data_bc],dim=0)
+            Y_data=torch.concatenate([Y_data_ic,Y_data_bc],dim=0)
 
         return X_data,Y_data
 
@@ -94,12 +84,16 @@ class DataGeneration(torch.utils.data.Dataset):
         t_idx = np.random.randint(0, T, N_samples)
         y_idx = np.random.randint(0, Y, N_samples)
         x_idx = np.random.randint(0, X, N_samples)
+        z_idx = np.int16(np.zeros(N_samples)).reshape(-1,1)
 
         t_norm = t_idx / (T - 1)
         y_norm = y_idx / (Y - 1)
         x_norm = x_idx / (X - 1)
 
         X_data = np.stack([t_norm, y_norm, x_norm], axis=1)
+        # We are adding column of zeros to represent depth
+        X_data=np.concatenate([X_data,z_idx],axis=1) 
+        
         Y_data = data_cube[t_idx, y_idx, x_idx].reshape(-1,1)
         return X_data, Y_data
     
@@ -109,16 +103,19 @@ class DataGeneration(torch.utils.data.Dataset):
         t_idx = np.int16(np.zeros(N_samples))
         y_idx = np.random.randint(0, Y, N_samples)
         x_idx = np.random.randint(0, X, N_samples)
-
+        z_idx = np.int16(np.zeros(N_samples)).reshape(-1,1)
     
         y_norm = y_idx / (Y - 1)
         x_norm = x_idx / (X - 1)
 
         X_data = np.stack([t_idx, y_norm, x_norm], axis=1)
+        # We are adding column of zeros to represent depth
+        X_data = np.concatenate([X_data,z_idx],axis=1) 
+
         Y_data = data_cube[t_idx, y_idx, x_idx].reshape(-1,1)
         return X_data, Y_data
     
-    def sample_random_data_points_bc(data_cube,N_samples=5000):
+    def sample_random_data_points_bc(self,data_cube,N_samples=5000):
         """
         Docstring for sample_random_data_points_bc
         
@@ -165,6 +162,10 @@ class DataGeneration(torch.utils.data.Dataset):
         X_stage_one=np.concatenate([x_norm_lower,x_norm_upper,x_idx_right,x_idx_left],axis=0)
         
         X_data_bc=np.stack([T_stage_one,Y_stage_one,X_stage_one],axis=1)
+
+        z_idx=np.zeros(X_data_bc.shape[0]).reshape(-1,1)
+
+        X_data_bc=np.concatenate([X_data_bc,z_idx],axis=1)
         
         T_idx_stage_one=np.concatenate([t_idx_lower,t_idx_upper,t_idx_right,t_idx_left],axis=0)
         Y_idx_stage_one=np.concatenate([y_idx_lower,y_idx_upper,y_idx_right,y_idx_left],axis=0)

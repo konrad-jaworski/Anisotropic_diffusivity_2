@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 import numpy as np
 from networks import FCN
-from helper_function import DomainDataset,gradNorm
+from helper_function import DomainDataset
 from tqdm import tqdm
 from torch.optim.lr_scheduler import ExponentialLR
 
