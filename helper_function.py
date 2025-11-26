@@ -44,86 +44,132 @@ class DomainDataset(torch.utils.data.Dataset):
 
     
 
-def gradNorm(net, layer, alpha, dataloader, num_epochs, lr1, lr2, log=False):
-    """
-    Args:
-        net (nn.Module): a multitask network with task loss
-        layer (nn.Module): a layers of the full network where appling GradNorm on the weights
-        alpha (float): hyperparameter of restoring force
-        dataloader (DataLoader): training dataloader
-        num_epochs (int): number of epochs
-        lr1（float): learning rate of multitask loss
-        lr2（float): learning rate of weights
-        log (bool): flag of result log
-    """
-    # init log
-    if log:
-        log_weights = []
-        log_loss = []
-    # set optimizer
-    optimizer1 = torch.optim.Adam(net.parameters(), lr=lr1)
-    # start traning
-    iters = 0
-    net.train()
-    for epoch in range(num_epochs):
-        # load data
-        for data in dataloader:
-            # cuda
-            if next(net.parameters()).is_cuda:
-                data = [d.cuda() for d in data]
-            # forward pass
-            loss = net(*data)
-            # initialization
-            if iters == 0:
-                # init weights
-                weights = torch.ones_like(loss)
-                weights = torch.nn.Parameter(weights)
-                T = weights.sum().detach() # sum of weights
-                # set optimizer for weights
-                optimizer2 = torch.optim.Adam([weights], lr=lr2)
-                # set L(0)
-                l0 = loss.detach()
-            # compute the weighted loss
-            weighted_loss = weights @ loss
-            # clear gradients of network
-            optimizer1.zero_grad()
-            # backward pass for weigthted task loss
-            weighted_loss.backward(retain_graph=True)
-            # compute the L2 norm of the gradients for each task
-            gw = []
-            for i in range(len(loss)):
-                dl = torch.autograd.grad(weights[i]*loss[i], layer.parameters(), retain_graph=True, create_graph=True)[0]
-                gw.append(torch.norm(dl))
-            gw = torch.stack(gw)
-            # compute loss ratio per task
-            loss_ratio = loss.detach() / l0
-            # compute the relative inverse training rate per task
-            rt = loss_ratio / loss_ratio.mean()
-            # compute the average gradient norm
-            gw_avg = gw.mean().detach()
-            # compute the GradNorm loss
-            constant = (gw_avg * rt ** alpha).detach()
-            gradnorm_loss = torch.abs(gw - constant).sum()
-            # clear gradients of weights
-            optimizer2.zero_grad()
-            # backward pass for GradNorm
-            gradnorm_loss.backward()
-            # log weights and loss
-            if log:
-                # weight for each task
-                log_weights.append(weights.detach().cpu().numpy().copy())
-                # task normalized loss
-                log_loss.append(loss_ratio.detach().cpu().numpy().copy())
-            # update model weights
-            optimizer1.step()
-            # update loss weights
-            optimizer2.step()
-            # renormalize weights
-            weights = (weights / weights.sum() * T).detach()
-            weights = torch.nn.Parameter(weights)
-            optimizer2 = torch.optim.Adam([weights], lr=lr2)
-            # update iters
-            iters += 1
-    # get logs
-    if log:
-        return np.stack(log_weights), np.stack(log_loss)
+
+class DataGeneration(torch.utils.data.Dataset):
+    def __init__(self,data_cube,n_interrior=None,n_initial=None,n_boundary=None):
+        # With normalization of temperature in place
+        self.data_cube=(data_cube-data_cube.min())/(data_cube.max()-data_cube.min())
+
+        self.n_interior=n_interrior
+        self.n_initial=n_initial
+        self.n_boundary=n_boundary
+
+    def generate(self):
+
+        if self.n_interior != None:
+            # Sample randomly data from inside of the data space
+            X_data_rand,Y_data_rand=self.sample_random_data_points(self.data_cube,self.n_interior)
+
+            # Convert to torch tensor format
+            X_data_rand=torch.from_numpy(X_data_rand).float()
+            Y_data_rand=torch.from_numpy(Y_data_rand).float()
+
+        if self.n_initial != None:
+            # Sample randomly data from first frame
+            X_data_ic,Y_data_ic=self.sample_random_data_points_ic(self.data_cube,self.n_initial)
+
+            # Convert to torch tensor format
+            X_data_ic=torch.from_numpy(X_data_ic).float()
+            Y_data_ic=torch.from_numpy(Y_data_ic).float()
+
+        if self.n_boundary != None:
+            # Sample randomly data from boundary of the data
+            X_data_bc,Y_data_bc=self.sample_random_data_points_bc(self.data_cube,self.n_boundary)
+            
+            # Convert to torch tensor format
+            X_data_bc=torch.from_numpy(X_data_bc).float()
+            Y_data_bc=torch.from_numpy(Y_data_bc).float()
+
+        if self.n_interior != None:
+            X_data=torch.concatenate([X_data_rand,X_data_ic,X_data_bc],dim=0)
+            Y_data=torch.concatenate([Y_data_rand,Y_data_ic,X_data_bc],dim=0)
+        elif self.n_interior == None:
+            X_data=torch.concatenate([X_data_ic,X_data_bc],dim=0)
+            Y_data=torch.concatenate([Y_data_ic,X_data_bc],dim=0)
+
+        return X_data,Y_data
+
+    def sample_random_data_points(self,data_cube, N_samples):
+        T, Y, X = data_cube.shape
+        t_idx = np.random.randint(0, T, N_samples)
+        y_idx = np.random.randint(0, Y, N_samples)
+        x_idx = np.random.randint(0, X, N_samples)
+
+        t_norm = t_idx / (T - 1)
+        y_norm = y_idx / (Y - 1)
+        x_norm = x_idx / (X - 1)
+
+        X_data = np.stack([t_norm, y_norm, x_norm], axis=1)
+        Y_data = data_cube[t_idx, y_idx, x_idx].reshape(-1,1)
+        return X_data, Y_data
+    
+
+    def sample_random_data_points_ic(self,data_cube,N_samples):
+        T, Y, X = data_cube.shape
+        t_idx = np.int16(np.zeros(N_samples))
+        y_idx = np.random.randint(0, Y, N_samples)
+        x_idx = np.random.randint(0, X, N_samples)
+
+    
+        y_norm = y_idx / (Y - 1)
+        x_norm = x_idx / (X - 1)
+
+        X_data = np.stack([t_idx, y_norm, x_norm], axis=1)
+        Y_data = data_cube[t_idx, y_idx, x_idx].reshape(-1,1)
+        return X_data, Y_data
+    
+    def sample_random_data_points_bc(data_cube,N_samples=5000):
+        """
+        Docstring for sample_random_data_points_bc
+        
+        :param data_cube: our data cube of thermography data
+        :param N_samples: number of sampler per each of boundary
+        """
+        
+        T, Y, X = data_cube.shape
+
+        # Lower boundary  y = 0
+        t_idx_lower = np.random.randint(0, T, N_samples)
+        y_idx_lower = np.int16(np.zeros(N_samples))
+        x_idx_lower = np.random.randint(0, X, N_samples)
+
+        t_norm_lower = t_idx_lower/(T-1)
+        x_norm_lower = x_idx_lower / (X - 1)
+
+        # Right boundary x = 0
+        t_idx_right = np.random.randint(0, T, N_samples)
+        y_idx_right = np.random.randint(0,Y,N_samples)
+        x_idx_right = np.int16(np.zeros(N_samples))
+
+        t_norm_right = t_idx_right/(T-1)
+        y_norm_right = y_idx_right /(Y-1)
+
+        # Upper boundary y = 1
+        t_idx_upper = np.random.randint(0, T, N_samples)
+        y_idx_upper = np.int16(np.ones(N_samples))
+        x_idx_upper = np.random.randint(0, X, N_samples)
+
+        t_norm_upper = t_idx_upper/(T-1)
+        x_norm_upper = x_idx_upper / (X - 1)
+
+        # Left boundary x = 1
+        t_idx_left = np.random.randint(0, T, N_samples)
+        y_idx_left = np.random.randint(0,Y,N_samples)
+        x_idx_left = np.int16(np.ones(N_samples))
+
+        t_norm_left = t_idx_left/(T-1)
+        y_norm_left = y_idx_left /(Y-1)
+
+        T_stage_one=np.concatenate([t_norm_lower,t_norm_upper,t_norm_right,t_norm_left],axis=0)
+        Y_stage_one=np.concatenate([y_idx_lower,y_idx_upper,y_norm_right,y_norm_left],axis=0)
+        X_stage_one=np.concatenate([x_norm_lower,x_norm_upper,x_idx_right,x_idx_left],axis=0)
+        
+        X_data_bc=np.stack([T_stage_one,Y_stage_one,X_stage_one],axis=1)
+        
+        T_idx_stage_one=np.concatenate([t_idx_lower,t_idx_upper,t_idx_right,t_idx_left],axis=0)
+        Y_idx_stage_one=np.concatenate([y_idx_lower,y_idx_upper,y_idx_right,y_idx_left],axis=0)
+        X_idx_stage_one=np.concatenate([x_idx_lower,x_idx_upper,x_idx_right,x_idx_left],axis=0)
+
+        Y_data_bc=data_cube[T_idx_stage_one,Y_idx_stage_one,X_idx_stage_one].reshape(-1,1)
+
+        return X_data_bc,Y_data_bc
