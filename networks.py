@@ -32,7 +32,7 @@ class FCN(nn.Module):
         self.a = nn.Parameter(torch.tensor([1.0], dtype=torch.float32))
     
     def forward(self, x):
-        # Input shape: [N, 3]  => [t, y, x]
+        # Input shape: [N, 4]  => [t, y, x, z]
         if not torch.is_tensor(x):
             x = torch.from_numpy(x).float()
 
@@ -42,25 +42,29 @@ class FCN(nn.Module):
         return x
 
     def PDE_loss(self, x_pde):
-        # x_pde: [N, 3] → [t, y, x]
+        # x_pde: [N, 4] → [t, y, x,z]
         # Here we are using collocation points which specificic sampling in the domain
-        x_pde.requires_grad_(True)
-        u = self(x_pde)
+        x = x_pde.clone().detach().requires_grad_(True)
+        u = self(x)
 
         # Compute first derivatives
-        grads = torch.autograd.grad(u, x_pde, torch.ones_like(u), create_graph=True)[0]
-        u_t = grads[:, 0:1]
-        u_y = grads[:, 1:2]
-        u_x = grads[:, 2:3]
+        grads = torch.autograd.grad(u, x, torch.ones_like(u), create_graph=True)[0]
+        u_t = grads[:, 0]
+        u_y = grads[:, 1]
+        u_x = grads[:, 2]
+        u_z = grads[:, 3]
 
         # Compute second derivatives
-        grads2_y = torch.autograd.grad(u_y, x_pde, torch.ones_like(u_y), create_graph=True)[0]
-        grads2_x = torch.autograd.grad(u_x, x_pde, torch.ones_like(u_x), create_graph=True)[0]
-        u_yy = grads2_y[:, 1:2]
-        u_xx = grads2_x[:, 2:3]
+        grads2_y = torch.autograd.grad(u_y, x, torch.ones_like(u_y), create_graph=True)[0]
+        grads2_x = torch.autograd.grad(u_x, x, torch.ones_like(u_x), create_graph=True)[0]
+        grads2_z = torch.autograd.grad(u_z, x, torch.ones_like(u_z), create_graph=True)[0]
+        u_yy = grads2_y[:, 1]
+        u_xx = grads2_x[:, 2]
+        u_zz = grads2_z[:, 3]
+
 
         # PDE residual:
-        f =  u_t - self.a * (u_xx + u_yy)
+        f =  u_t - self.a * (u_xx + u_yy + u_zz)
         loss_phys = torch.mean(f ** 2)
 
         return loss_phys
