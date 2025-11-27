@@ -22,7 +22,9 @@ lr=1e-3
 # Parameters for the grad norm moving averages
 lr2=1e-2
 alpha=0.26
-gradnorm_mode=True
+gradnorm_mode=False
+fixed_mode=False
+ciriculum_mode=True
 
 # Weight for mode without gradnorm active
 z=0.5
@@ -37,10 +39,12 @@ decay_mode=0 # Activated exponetial decay of the lr parameter during training 0-
 decay_every=500 # Frequency of exponential decay
 
 batch_size=1024
+coll_mode='lhs'
 # /--------------------------------------------------------------------/
 # Data preparation
 
-data_path=r'C:\Users\stone\Desktop\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz'
+# data_path=r'C:\Users\stone\Desktop\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz'
+data_path=r'C:\Users\stone\Desktop\Synthetic_data_no_defect\2025_11_18_sample_100x100x5mm_no_defect_isotropic_gaussian_heat_no_conv_cond_5.npz'
 data=np.load(data_path,allow_pickle=True)
 data_cube = data['data'][34:, :, :]  # shape [T, Y, X]
 
@@ -48,7 +52,7 @@ data_cube = data['data'][34:, :, :]  # shape [T, Y, X]
 d_operator=DataGeneration(data_cube,N_interior,N_ic,N_bc)
 
 # Producing collocation points for the PDE loss
-coll_data=DomainDataset(n_samples=N_coll,n_dim=4,method='lhs')
+coll_data=DomainDataset(n_samples=N_coll,n_dim=4,method=coll_mode)
 
 if sampling_mode==0:
     X_coll=coll_data.resample()
@@ -157,13 +161,13 @@ for epoch in tqdm(range(N_epoch)):
 
             # renormalize weights
             # Option A with reinitialization of the optimizer
-            weights = (weights / weights.sum() * T).detach()
-            weights = torch.nn.Parameter(weights)
-            optimizer2 = torch.optim.Adam([weights], lr=lr2)
+            # weights = (weights / weights.sum() * T).detach()
+            # weights = torch.nn.Parameter(weights)
+            # optimizer2 = torch.optim.Adam([weights], lr=lr2)
 
             # Option B with keeping the momentum
-            # with torch.no_grad():
-            #     weights *= T / weights.sum()
+            with torch.no_grad():
+                weights *= T / weights.sum()
 
 
             # update iters
@@ -174,8 +178,26 @@ for epoch in tqdm(range(N_epoch)):
             phys_loss_batch+=loss_phys.item()
 
 
-        else:
+        elif fixed_mode:
             loss=(1-z)*loss_data+z*loss_phys
+            optimizer1.zero_grad()
+            loss.backward()
+            optimizer1.step()
+
+            total_loss_batch+=(loss_data+loss_phys).item()
+            data_loss_batch+=loss_data.item()
+            phys_loss_batch+=loss_phys.item()
+
+        elif ciriculum_mode:
+            # Exponential option A
+            # r = 1.0 - epoch/N_epoch
+            # Cosine maping option B
+            r = 0.5*(1+torch.cos(torch.pi*epoch/N_epoch))
+
+            w_data=r
+            w_phys=1.0-r
+            loss=w_data*loss_data+w_phys*loss_phys
+
             optimizer1.zero_grad()
             loss.backward()
             optimizer1.step()
@@ -195,7 +217,42 @@ for epoch in tqdm(range(N_epoch)):
     log_loss_total.append(avg_total_loss)
     log_loss_phys.append(avg_phys_loss)
     log_loss_data.append(avg_data_loss)
+    log_a.append(PINN.a.item())
 
     if epoch%10 == 0:
-        print(f"Epoch: {epoch} | Data loss: {avg_data_loss} | Phys loss: {avg_phys_loss} | Coefficient: {PINN.a}")
+        print(f"Epoch: {epoch} | Data loss: {avg_data_loss} | Phys loss: {avg_phys_loss} | Coefficient: {PINN.a.item()}")
 
+torch.save(
+    {
+        "loss_total": log_loss_total,
+        "loss_phys": log_loss_phys,
+        "loss_data": log_loss_data,
+        "loss_weights": log_loss,
+        "Weights": log_weights,
+        "diffusivity":log_a
+    },
+    "loss_logs.pth"
+)
+
+torch.save(
+    {
+     "N_epoch": N_epoch,
+     "lr":lr,
+     "lr2":lr2,
+     "alpha":alpha,
+     "grad_norm_mode":gradnorm_mode,
+     "z_weight":z,
+     "N_interrior":N_interior,
+     "N_bc":N_bc,
+     "N_ic":N_ic,
+     "N_coll":N_coll,
+     "sampling_mode":sampling_mode,
+     "decay_mode":decay_mode,
+     "decay_every":decay_every,
+     "batch_size":batch_size,
+     "sampling_collocation":coll_mode
+    },
+    "Meta_data.pth"
+)
+
+torch.save(PINN.state_dict(), f"PINN_epoch_{epoch}.pth")
