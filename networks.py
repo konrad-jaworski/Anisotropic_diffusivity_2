@@ -29,7 +29,8 @@ class FCN(nn.Module):
             nn.init.zeros_(layer.bias)
 
         # Inverse parameter (thermal diffusivity)
-        self.a = nn.Parameter(torch.tensor([1.0], dtype=torch.float32))
+        a_phys=1e-6
+        self.log_a = nn.Parameter(torch.log(torch.tensor([a_phys], dtype=torch.float32)))
     
     def forward(self, x):
         # Input shape: [N, 4]  => [t, y, x, z]
@@ -64,7 +65,9 @@ class FCN(nn.Module):
 
 
         # PDE residual:
-        f =  u_t - self.a * (u_xx + u_yy + u_zz)
+        # f =  u_t - self.a * (u_xx + u_yy + u_zz)
+        a_diff=torch.exp(self.log_a)
+        f=u_t-a_diff*10*u_xx/0.1**2-a_diff*10*u_yy/0.1**2-a_diff*10*u_zz/0.005**2
         loss_phys = torch.mean(f ** 2)
 
         return loss_phys

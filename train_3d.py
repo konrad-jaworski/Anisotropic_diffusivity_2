@@ -30,10 +30,10 @@ ciriculum_mode=False
 # Weight for mode without gradnorm active
 z=0.5
 
-N_interior=60000
-N_ic=100000
-N_bc=10000 # Sampled from each of the boundary produce 4*N_bc samples
-N_coll=200000
+N_interior=40000
+N_ic=40000
+N_bc=5000 # Sampled from each of the boundary produce 4*N_bc samples
+N_coll=100000
 
 sampling_mode=1 # Depending whether 0 or 1 we sampled data once or every iteration 0-sampled once
 decay_mode=0 # Activated exponetial decay of the lr parameter during training 0-no decay
