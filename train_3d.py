@@ -2,6 +2,7 @@ import torch
 import torch.optim as optim
 import numpy as np
 from networks import FCN
+import math
 from helper_function import DomainDataset,DataGeneration
 from tqdm import tqdm
 from torch.optim.lr_scheduler import ExponentialLR
@@ -23,23 +24,23 @@ lr=1e-3
 lr2=1e-2
 alpha=0.26
 gradnorm_mode=False
-fixed_mode=False
-ciriculum_mode=True
+fixed_mode=True
+ciriculum_mode=False
 
 # Weight for mode without gradnorm active
 z=0.5
 
 N_interior=60000
-N_ic=20000
-N_bc=5000 # Sampled from each of the boundary produce 4*N_bc samples
-N_coll=100000
+N_ic=100000
+N_bc=10000 # Sampled from each of the boundary produce 4*N_bc samples
+N_coll=200000
 
-sampling_mode=0 # Depending whether 0 or 1 we sampled data once or every iteration 0-sampled once
+sampling_mode=1 # Depending whether 0 or 1 we sampled data once or every iteration 0-sampled once
 decay_mode=0 # Activated exponetial decay of the lr parameter during training 0-no decay
 decay_every=500 # Frequency of exponential decay
 
 batch_size=1024
-coll_mode='lhs'
+coll_mode='sobol'
 # /--------------------------------------------------------------------/
 # Data preparation
 
@@ -190,9 +191,9 @@ for epoch in tqdm(range(N_epoch)):
 
         elif ciriculum_mode:
             # Exponential option A
-            # r = 1.0 - epoch/N_epoch
+            r = 1.0 - epoch/N_epoch
             # Cosine maping option B
-            r = 0.5*(1+torch.cos(torch.pi*epoch/N_epoch))
+            # r = 0.5*(1+math.cos(math.pi*epoch/N_epoch))
 
             w_data=r
             w_phys=1.0-r
@@ -220,7 +221,7 @@ for epoch in tqdm(range(N_epoch)):
     log_a.append(PINN.a.item())
 
     if epoch%10 == 0:
-        print(f"Epoch: {epoch} | Data loss: {avg_data_loss} | Phys loss: {avg_phys_loss} | Coefficient: {PINN.a.item()}")
+        print(f"Epoch: {epoch} | Data loss: {avg_data_loss} | Phys loss: {avg_phys_loss} | Coefficient: {PINN.a.clone().detach().item()}")
 
 torch.save(
     {
