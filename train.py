@@ -298,7 +298,7 @@ while run_iter<=N_run:
                 f"Physics Loss = {weights[1].item()*loss_phys.item():.6f} | "
                 f"Weight 2 = {weights[1]:.6f} | "
                 f"a = {PINN.a.item():.6e}"
-            )
+   reor         )
         if epoch % 1000 == 0 or epoch == N_epoch - 1:
             logs = {
                         "total_loss": log_loss_total,
