@@ -7,7 +7,7 @@ class DomainDataset:
     Provides collocation points for PINN PDE training.
     Supports Sobol, Latin Hypercube, or uniform random sampling.
     """
-    def __init__(self, n_samples=1024, n_dim=3, method='lhs'):
+    def __init__(self, n_samples=1024, n_dim=4, method='lhs'):
         self.n_dim = n_dim
         self.n_samples = n_samples
         self.method = method
@@ -36,9 +36,14 @@ class DomainDataset:
         return samples
 
 class DataGeneration:
-    def __init__(self,data_cube,n_interrior=None,n_initial=None,n_boundary=None):
+    def __init__(self,data_cube,cut_frame,n_interrior=None,n_initial=None,n_boundary=None):
         # With normalization of temperature in place
-        self.data_cube=(data_cube-data_cube.min())/(data_cube.max()-data_cube.min())
+        
+        # Normalize first
+        data_norm = (data_cube - data_cube.min()) / (data_cube.max() - data_cube.min())
+
+        # Then cut the cube
+        self.data_cube = data_norm[cut_frame:, :, :]
 
         self.n_interior=n_interrior
         self.n_initial=n_initial

@@ -7,22 +7,22 @@ from helper_function import DomainDataset,DataGeneration
 from tqdm import tqdm
 from torch.optim.lr_scheduler import ExponentialLR
 from torch.utils.data import TensorDataset, DataLoader
+import os
 
 # Setting device
 device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 
 torch.manual_seed(0)
 np.random.seed(0)
 
 # /--------------------------------------------------------------------/
 # Training parameters
-N_epoch=1000
-lr=1e-3 
+N_epoch=10000
+lr=1e-3
 
 # Parameters for the grad norm moving averages
 lr2=1e-2
-alpha=0.26
+alpha=0.12
 gradnorm_mode=False
 fixed_mode=True
 ciriculum_mode=False
@@ -30,27 +30,34 @@ ciriculum_mode=False
 # Weight for mode without gradnorm active
 z=0.5
 
-N_interior=40000
-N_ic=40000
-N_bc=5000 # Sampled from each of the boundary produce 4*N_bc samples
+N_interior=None
+N_ic=60000
+N_bc=10000 # Sampled from each of the boundary produce 4*N_bc samples
 N_coll=100000
 
-sampling_mode=1 # Depending whether 0 or 1 we sampled data once or every iteration 0-sampled once
-decay_mode=0 # Activated exponetial decay of the lr parameter during training 0-no decay
+sampling_mode=0 # Depending whether 0 or 1 we sampled data once or every iteration 0-sampled once
+decay_mode=1 # Activated exponetial decay of the lr parameter during training 0-no decay
 decay_every=500 # Frequency of exponential decay
 
 batch_size=1024
 coll_mode='sobol'
+
+
+# Saving directory
+
+folder = "Results_fixed_case_0.5_constant_sampled_data_IC_and_BC_lr_1e-3_sobol_batch_1024_case_1_1_starting_point_decay"
+os.makedirs(folder, exist_ok=True)
+
 # /--------------------------------------------------------------------/
 # Data preparation
 
-# data_path=r'C:\Users\stone\Desktop\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz'
-data_path=r'C:\Users\stone\Desktop\Synthetic_data_no_defect\2025_11_18_sample_100x100x5mm_no_defect_isotropic_gaussian_heat_no_conv_cond_5.npz'
+data_path=r'C:\Users\stone\Desktop\Synthetic_data_no_defect\2025_10_24_sample_100x100x5mm_no_defect_isotropic_gaussian_heat.npz'
+# data_path=r'C:\Users\stone\Desktop\Synthetic_data_no_defect\2025_11_18_sample_100x100x5mm_no_defect_isotropic_gaussian_heat_no_conv_cond_5.npz'
 data=np.load(data_path,allow_pickle=True)
-data_cube = data['data'][34:, :, :]  # shape [T, Y, X]
+data_cube = data['data']  # shape [T, Y, X]
 
 # Sampling randomly data from the data domain
-d_operator=DataGeneration(data_cube,N_interior,N_ic,N_bc)
+d_operator=DataGeneration(data_cube,34,N_interior,N_ic,N_bc)
 
 # Producing collocation points for the PDE loss
 coll_data=DomainDataset(n_samples=N_coll,n_dim=4,method=coll_mode)
@@ -63,7 +70,7 @@ if sampling_mode==0:
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     
 # Definition of the network
-layers=[4,100,100,100,100,1]
+layers=[4,100,100,100,100,100,1]
 PINN=FCN(layers)
 PINN=PINN.to(device) 
 
@@ -81,6 +88,8 @@ log_loss=[]
 
 # Log of the diffusivity parameter
 log_a=[]
+
+# logging physics
 
 # Setting up the optimizer
 optimizer1=optim.Adam(PINN.parameters(),lr=lr) # Optimizer for the network
@@ -218,10 +227,19 @@ for epoch in tqdm(range(N_epoch)):
     log_loss_total.append(avg_total_loss)
     log_loss_phys.append(avg_phys_loss)
     log_loss_data.append(avg_data_loss)
-    log_a.append(PINN.a.item())
+    log_a.append(PINN.a.detach().item())
 
-    if epoch%10 == 0:
-        print(f"Epoch: {epoch} | Data loss: {avg_data_loss} | Phys loss: {avg_phys_loss} | Coefficient: {PINN.a.clone().detach().item()}")
+    if epoch % 10 == 0:
+       
+        print(f"Epoch: {epoch} | Data loss: {avg_data_loss:.4e} | Phys loss: {avg_phys_loss:.4e} | Coefficient: {PINN.a.detach().item():.4e}")
+
+
+
+
+save_path_logs = os.path.join(folder, "loss_logs.pth")
+save_path_meta = os.path.join(folder, "Meta_data.pth")
+save_path_model = os.path.join(folder, "PINN.pth")
+
 
 torch.save(
     {
@@ -232,7 +250,7 @@ torch.save(
         "Weights": log_weights,
         "diffusivity":log_a
     },
-    "loss_logs.pth"
+    save_path_logs
 )
 
 torch.save(
@@ -253,7 +271,7 @@ torch.save(
      "batch_size":batch_size,
      "sampling_collocation":coll_mode
     },
-    "Meta_data.pth"
+    save_path_meta
 )
 
-torch.save(PINN.state_dict(), f"PINN_epoch_{epoch}.pth")
+torch.save(PINN.state_dict(), save_path_model)
