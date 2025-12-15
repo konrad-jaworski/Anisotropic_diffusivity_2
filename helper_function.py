@@ -1,6 +1,9 @@
 import numpy as np
 import torch
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+
 class DataGenerator:
     def __init__(self,data):
         """
@@ -168,7 +171,7 @@ class DataGenerator:
         time_axis=torch.zeros((n_points,1))
         X_net=torch.concatenate([time_axis,X_phys],dim=1)
 
-        Y_net=torch.tensor([0])
+        Y_net=torch.zeros((X_net.size(0),1))
 
         return X_net, Y_net
     
@@ -185,7 +188,7 @@ class DataGenerator:
         return time_axis,space_points
     
     def time_stepping(self,time_axis,space_points,index):
-        proxy_time=torch.ones((space_points.size(0),1)).to(torch.float32)*time_axis[index]
+        proxy_time=torch.ones((space_points.size(0),1),device=device).to(torch.float32)*time_axis[index]
         proxy_time.size()
         step=torch.concatenate([proxy_time,space_points],dim=1)
 
