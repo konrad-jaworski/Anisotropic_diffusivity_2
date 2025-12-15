@@ -1,181 +1,195 @@
 import numpy as np
 import torch
-from scipy.stats import qmc
 
-class DomainDataset:
-    """
-    Provides collocation points for PINN PDE training.
-    Supports Sobol, Latin Hypercube, or uniform random sampling.
-    """
-    def __init__(self, n_samples=1024, n_dim=4, method='lhs'):
-        self.n_dim = n_dim
-        self.n_samples = n_samples
-        self.method = method
-        self.resample()      # generate initial points
+class DataGenerator:
+    def __init__(self,data):
+        """
+        Constructor of data generot class
+        data: torch tensor of shape (T,size_y,size_x) !Must be Normalized between 0 and 1 
 
-    def resample(self):
-        if self.method == 'sobol':
-            engine = torch.quasirandom.SobolEngine(
-                dimension=self.n_dim,
-                scramble=True            
-            )
-            samples = engine.draw(self.n_samples).float()
+        """
+        self.data=data
+    
+    def get_indexes_latin(self, n_points):
+        """
+        Generate n_points unique 2D integer indices on a grid (size_y, size_x)
+        using true stratified sampling (2D Latin Hypercube style),
+        strictly inside the boundaries (not touching edges).
+        """
 
-        elif self.method == 'lhs':
-            sampler = qmc.LatinHypercube(d=self.n_dim)
-            samples = sampler.random(self.n_samples)
-            samples = torch.tensor(samples, dtype=torch.float32)
+        size_y = self.data.size(1)
+        size_x = self.data.size(2)
 
-        elif self.method == 'random':
-            samples = torch.rand(self.n_samples, self.n_dim)
+        # Determine number of strata along each axis (roughly square)
+        n_sqrt = int(torch.ceil(torch.sqrt(torch.tensor(n_points, dtype=torch.float32))))
+        n_y = min(n_sqrt, size_y - 2)  # leave 1 pixel margin
+        n_x = min(int(torch.ceil(torch.tensor(n_points, dtype=torch.float32) / n_y)), size_x - 2)
 
-        else:
-            raise ValueError("method must be 'sobol', 'lhs', or 'random'")
+        # Compute stratum edges (avoid touching boundaries)
+        y_edges = torch.linspace(1, size_y - 1, n_y + 1)
+        x_edges = torch.linspace(1, size_x - 1, n_x + 1)
 
-        self.samples = samples
+        points = []
+        for i in range(n_y):
+            for j in range(n_x):
+                if len(points) >= n_points:
+                    break
+
+                # Pick a random point inside the stratum
+                y = torch.randint(int(y_edges[i]), int(y_edges[i + 1]), (1,)).item()
+                x = torch.randint(int(x_edges[j]), int(x_edges[j + 1]), (1,)).item()
+
+                points.append((y, x))
+
+        # Convert to tensors
+        points = torch.tensor(points[:n_points])
+        Y, X = points[:, 0], points[:, 1]
+
+        return X, Y
+
+    
+    def sub_sample(self,X,Y,sub_sample=1,frame_rate=300):
+        # This methods subsample the time data axis, which allows for coarse selection od data points in order to make faster training.
+        T=self.data.size(0)
+        temp=self.data[::sub_sample,Y,X]
+        temp_len=temp.size(0)
+        t_v=torch.linspace(0,T/frame_rate,temp_len) # This produce for us only physical scale of time
+        return temp, t_v
+    
+    def network_format(self,X,Y,sub_sample=1,frame_rate=300,phys_scale=0.1):
+        # Takes data coordinates and reformulate to physical scales and Network frendly format.
+
+        # 1. Sample the data
+        temp, t_v = self.sub_sample(X, Y, sub_sample, frame_rate)  # temp shape: (T, n_points)
+        
+        # 2. Convert indices to physical units for network 
+        
+        # Debugging line
+        # Yf = Y.to(torch.float32)
+        # Xf = X.to(torch.float32)
+        
+        _,N_y,N_x=self.data.size()
+        Yf = Y*phys_scale/N_y
+        Xf = X*phys_scale/N_x
+
+        # 3. Use meshgrid over time and point index
+        n_points=X.size(0)
+        point_idx = torch.arange(n_points).to(torch.float32)
+        
+        # Debugging line
+        # t_v=torch.linspace(0,3304,3304)
+
+        Tt, P = torch.meshgrid(t_v, point_idx, indexing='ij')  # shape: (T, n_points)
+        P = P.to(torch.long)  # index must be integer
+
+        # 4. Gather corresponding Y, X for each point
+        Yy = Yf[P]  # shape: (T, n_points)
+        Xx = Xf[P]  # shape: (T, n_points)
+
+        # 5. Flatten in row-major order to match temp.flatten()
+        Tt = Tt.reshape(-1, 1)
+        Yy = Yy.reshape(-1, 1)
+        Xx = Xx.reshape(-1, 1)
+        Zz = torch.zeros_like(Xx)
+
+        # 6. Network input
+        X_net = torch.cat([Tt, Yy, Xx, Zz], dim=1)
+
+        # 7. Flatten target in **same order**
+        Y_net = temp.reshape(-1, 1)
+
+        # Our X_net data are in physical unit sense
+        return X_net, Y_net
+
+    def boundary_data(self,boundary_division=4):
+        
+        # 1. Generate boundary points
+        _,size_y,size_x=self.data.size()
+        x=torch.linspace(0,size_x-1,boundary_division)
+        y=torch.linspace(0,size_y-1,boundary_division)
+
+        # 2. Fill in the x axis coordinates
+        P_lr=torch.ones(2*boundary_division,2)*(size_x-1)
+        P_lr[0:boundary_division,0]=0.0
+        j=0
+        for i in range(2*boundary_division):
+            if j==boundary_division:
+                j=0
+            P_lr[i,1]=x[j]
+            j=j+1
+
+        # 3. Fill in the y axis coordinates
+        P_tb=torch.ones(2*boundary_division,2)*(size_y-1)
+        P_tb[0:boundary_division,1]=0.0
+
+        j=0
+        for i in range(2*boundary_division):
+            if j==boundary_division:
+                j=0
+            P_tb[i,0]=y[j]
+            j=j+1
+
+        # 4. Combine them
+        P=torch.concatenate([P_lr,P_tb],dim=0)
+        P=P.round().long()
+
+        Px=P[:,0]
+        X=Px.to(torch.int)
+        Py=P[:,1]
+        Y=Py.to(torch.int)
+
+        return X, Y
+    
+    def lhs(self,n_samples, n_dims):
+        """
+        Latin Hypercube Sampling in [0,1]^n_dims.
+        Returns tensor of shape (n_samples, n_dims).
+        """
+        # Divide into equal strata
+        cut = torch.linspace(0, 1, n_samples + 1)
+
+        # Sample one point uniformly from each stratum per dimension
+        u = torch.rand(n_samples, n_dims)
+        samples = cut[:-1].unsqueeze(1) + (u * (1.0 / n_samples))
+
+        # Shuffle within each dimension
+        for dim in range(n_dims):
+            perm = torch.randperm(n_samples)
+            samples[:, dim] = samples[perm, dim]
+
         return samples
-
-class DataGeneration:
-    def __init__(self,data_cube,cut_frame,n_interrior=None,n_initial=None,n_boundary=None):
-        # With normalization of temperature in place
-        
-        # Normalize first
-        data_norm = (data_cube - data_cube.min()) / (data_cube.max() - data_cube.min())
-
-        # Then cut the cube
-        self.data_cube = data_norm[cut_frame:, :, :]
-
-        self.n_interior=n_interrior
-        self.n_initial=n_initial
-        self.n_boundary=n_boundary
-
-    def generate(self):
-
-        if self.n_interior != None:
-            # Sample randomly data from inside of the data space
-            X_data_rand,Y_data_rand=self.sample_random_data_points(self.data_cube,self.n_interior)
-
-            # Convert to torch tensor format
-            X_data_rand=torch.from_numpy(X_data_rand).float()
-            Y_data_rand=torch.from_numpy(Y_data_rand).float()
-
-        if self.n_initial != None:
-            # Sample randomly data from first frame
-            X_data_ic,Y_data_ic=self.sample_random_data_points_ic(self.data_cube,self.n_initial)
-
-            # Convert to torch tensor format
-            X_data_ic=torch.from_numpy(X_data_ic).float()
-            Y_data_ic=torch.from_numpy(Y_data_ic).float()
-
-        if self.n_boundary != None:
-            # Sample randomly data from boundary of the data
-            X_data_bc,Y_data_bc=self.sample_random_data_points_bc(self.data_cube,self.n_boundary)
-            
-            # Convert to torch tensor format
-            X_data_bc=torch.from_numpy(X_data_bc).float()
-            Y_data_bc=torch.from_numpy(Y_data_bc).float()
-
-        if self.n_interior != None:
-            X_data=torch.concatenate([X_data_rand,X_data_ic,X_data_bc],dim=0)
-            Y_data=torch.concatenate([Y_data_rand,Y_data_ic,Y_data_bc],dim=0)
-        elif self.n_interior == None:
-            X_data=torch.concatenate([X_data_ic,X_data_bc],dim=0)
-            Y_data=torch.concatenate([Y_data_ic,Y_data_bc],dim=0)
-
-        return X_data,Y_data
-
-    def sample_random_data_points(self,data_cube, N_samples):
-        T, Y, X = data_cube.shape
-        t_idx = np.random.randint(0, T, N_samples)
-        y_idx = np.random.randint(0, Y, N_samples)
-        x_idx = np.random.randint(0, X, N_samples)
-        z_idx = np.int16(np.zeros(N_samples)).reshape(-1,1)
-
-        t_norm = t_idx / (T - 1)
-        y_norm = y_idx / (Y - 1)
-        x_norm = x_idx / (X - 1)
-
-        X_data = np.stack([t_norm, y_norm, x_norm], axis=1)
-        # We are adding column of zeros to represent depth
-        X_data=np.concatenate([X_data,z_idx],axis=1) 
-        
-        Y_data = data_cube[t_idx, y_idx, x_idx].reshape(-1,1)
-        return X_data, Y_data
     
+    def set_initial_condition_points(self,n_points,phys_scales=[0.1,0.1,0.005]):
 
-    def sample_random_data_points_ic(self,data_cube,N_samples):
-        T, Y, X = data_cube.shape
-        t_idx = np.int16(np.zeros(N_samples))
-        y_idx = np.random.randint(0, Y, N_samples)
-        x_idx = np.random.randint(0, X, N_samples)
-        z_idx = np.int16(np.zeros(N_samples)).reshape(-1,1)
+        X = self.lhs(n_samples=n_points, n_dims=3)
+        phys_scales=torch.tensor(phys_scales)
+        X_phys=X*phys_scales
+
+        time_axis=torch.zeros((n_points,1))
+        X_net=torch.concatenate([time_axis,X_phys],dim=1)
+
+        Y_net=torch.tensor([0])
+
+        return X_net, Y_net
     
-        y_norm = y_idx / (Y - 1)
-        x_norm = x_idx / (X - 1)
+    def set_collocation_points(self,N_t,N_space,phys_scales=[14.0,0.1,0.1,0.005]):
+        
+        phys_scales = torch.tensor(phys_scales)
 
-        X_data = np.stack([t_idx, y_norm, x_norm], axis=1)
-        # We are adding column of zeros to represent depth
-        X_data = np.concatenate([X_data,z_idx],axis=1) 
+        # Time points (flattened)
+        time_axis = self.lhs(n_samples=N_t, n_dims=1).flatten() * phys_scales[0]
 
-        Y_data = data_cube[t_idx, y_idx, x_idx].reshape(-1,1)
-        return X_data, Y_data
+        # Space points (same for all times)
+        space_points = self.lhs(n_samples=N_space, n_dims=3) * phys_scales[1:4]
+
+        return time_axis,space_points
     
-    def sample_random_data_points_bc(self,data_cube,N_samples=5000):
-        """
-        Docstring for sample_random_data_points_bc
-        
-        :param data_cube: our data cube of thermography data
-        :param N_samples: number of sampler per each of boundary
-        """
-        
-        T, Y, X = data_cube.shape
+    def time_stepping(self,time_axis,space_points,index):
+        proxy_time=torch.ones((space_points.size(0),1)).to(torch.float32)*time_axis[index]
+        proxy_time.size()
+        step=torch.concatenate([proxy_time,space_points],dim=1)
 
-        # Lower boundary  y = 0
-        t_idx_lower = np.random.randint(0, T, N_samples)
-        y_idx_lower = np.int16(np.zeros(N_samples))
-        x_idx_lower = np.random.randint(0, X, N_samples)
-
-        t_norm_lower = t_idx_lower/(T-1)
-        x_norm_lower = x_idx_lower / (X - 1)
-
-        # Right boundary x = 0
-        t_idx_right = np.random.randint(0, T, N_samples)
-        y_idx_right = np.random.randint(0,Y,N_samples)
-        x_idx_right = np.int16(np.zeros(N_samples))
-
-        t_norm_right = t_idx_right/(T-1)
-        y_norm_right = y_idx_right /(Y-1)
-
-        # Upper boundary y = 1
-        t_idx_upper = np.random.randint(0, T, N_samples)
-        y_idx_upper = np.int16(np.ones(N_samples))
-        x_idx_upper = np.random.randint(0, X, N_samples)
-
-        t_norm_upper = t_idx_upper/(T-1)
-        x_norm_upper = x_idx_upper / (X - 1)
-
-        # Left boundary x = 1
-        t_idx_left = np.random.randint(0, T, N_samples)
-        y_idx_left = np.random.randint(0,Y,N_samples)
-        x_idx_left = np.int16(np.ones(N_samples))
-
-        t_norm_left = t_idx_left/(T-1)
-        y_norm_left = y_idx_left /(Y-1)
-
-        T_stage_one=np.concatenate([t_norm_lower,t_norm_upper,t_norm_right,t_norm_left],axis=0)
-        Y_stage_one=np.concatenate([y_idx_lower,y_idx_upper,y_norm_right,y_norm_left],axis=0)
-        X_stage_one=np.concatenate([x_norm_lower,x_norm_upper,x_idx_right,x_idx_left],axis=0)
-        
-        X_data_bc=np.stack([T_stage_one,Y_stage_one,X_stage_one],axis=1)
-
-        z_idx=np.zeros(X_data_bc.shape[0]).reshape(-1,1)
-
-        X_data_bc=np.concatenate([X_data_bc,z_idx],axis=1)
-        
-        T_idx_stage_one=np.concatenate([t_idx_lower,t_idx_upper,t_idx_right,t_idx_left],axis=0)
-        Y_idx_stage_one=np.concatenate([y_idx_lower,y_idx_upper,y_idx_right,y_idx_left],axis=0)
-        X_idx_stage_one=np.concatenate([x_idx_lower,x_idx_upper,x_idx_right,x_idx_left],axis=0)
-
-        Y_data_bc=data_cube[T_idx_stage_one,Y_idx_stage_one,X_idx_stage_one].reshape(-1,1)
-
-        return X_data_bc,Y_data_bc
+        # Monter-Carlo space time coverage witout explosion 
+        # idx = torch.randint(0, N_t, (1,))
+        # X = time_stepping(time_axis, space_points, idx)
+        return step
