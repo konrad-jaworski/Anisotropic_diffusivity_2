@@ -64,7 +64,7 @@ space_points=space_points.to(device)
 
 # Definition of the network
 layers=[4,50,50,50,50,1]
-PINN=ThermalDiffusionPINN(layers)
+PINN=ThermalDiffusionPINN(layers,mode='inverse')
 PINN.to(device)
 
 

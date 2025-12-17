@@ -67,9 +67,9 @@ class ThermalDiffusionPINN(nn.Module):
             self.a_z_scaled = nn.Parameter(torch.tensor(1.0))
             
             # Store physical scales for conversion if needed
-            self.register_buffer('time_max', torch.tensor(time_max))
-            self.register_buffer('xy_max', torch.tensor(xy_max))
-            self.register_buffer('z_max', torch.tensor(z_max))
+            # self.register_buffer('time_max', torch.tensor(time_max))
+            # self.register_buffer('xy_max', torch.tensor(xy_max))
+            # self.register_buffer('z_max', torch.tensor(z_max))
     
     def forward(self, x_norm):
         """Forward pass with NORMALIZED inputs (0-1 range)"""
