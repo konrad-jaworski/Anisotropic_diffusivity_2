@@ -83,11 +83,12 @@ scheduler = CosineAnnealingWarmRestarts(
 N_epoch=100000
 
 
-early_stop_patience = 5000
+early_stop_patience = 1000
 early_stop_delta = 1e-6
 best_loss = float("inf")
 epochs_no_improve = 0
 
+# step = operator.time_stepping(time_axis, space_points, 0)
 
 for i in tqdm(range(N_epoch)):
     
@@ -99,13 +100,15 @@ for i in tqdm(range(N_epoch)):
 
     pde_loss = torch.tensor(0.0, device=device)
 
-    for i in range(len(time_axis) - 1):
-        step = operator.time_stepping(time_axis, space_points, i)
+    for j in range(len(time_axis) - 1):
+        step = operator.time_stepping(time_axis, space_points, j)
         pde_loss += PINN.PDE_loss(step)
 
     pde_loss = pde_loss / (len(time_axis) - 1)
 
-    loss = 0.5*data_loss + 0.5*pde_loss
+    # pde_loss=PINN.PDE_loss(step)
+
+    loss = data_loss + 1e-3*pde_loss
 
     loss.backward()
     optimizer.step()
