@@ -108,7 +108,7 @@ for i in tqdm(range(N_epoch)):
 
     # pde_loss=PINN.PDE_loss(step)
 
-    loss = data_loss + 1e-3*pde_loss
+    loss = data_loss + 1e-1*pde_loss
 
     loss.backward()
     optimizer.step()
