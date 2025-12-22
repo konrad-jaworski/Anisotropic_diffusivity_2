@@ -41,36 +41,22 @@ class ThermalDiffusionPINN(nn.Module):
         # --- Handle diffusivities ---
         if self.mode == 'forward':
             # Forward mode: known anisotropic diffusivities
-            a_x_physical = k[0] / (Cp[0] * ro[0])
-            a_y_physical = k[1] / (Cp[1] * ro[1])
-            a_z_physical = k[2] / (Cp[2] * ro[2])
-            
-            # Store as BUFFERS
-            self.register_buffer('a_x_physical', torch.tensor(a_x_physical))
-            self.register_buffer('a_y_physical', torch.tensor(a_y_physical))
-            self.register_buffer('a_z_physical', torch.tensor(a_z_physical))
+            self.a_x_physical = k[0] / (Cp[0] * ro[0])
+            self.a_y_physical = k[1] / (Cp[1] * ro[1])
+            self.a_z_physical = k[2] / (Cp[2] * ro[2])
             
             # Compute SCALED diffusivities for PDE in normalized coordinates
-            a_x_scaled = a_x_physical * time_max / (xy_max**2)
-            a_y_scaled = a_y_physical * time_max / (xy_max**2)
-            a_z_scaled = a_z_physical * time_max / (z_max**2)
-            
-            self.register_buffer('a_x_scaled', torch.tensor(a_x_scaled))
-            self.register_buffer('a_y_scaled', torch.tensor(a_y_scaled))
-            self.register_buffer('a_z_scaled', torch.tensor(a_z_scaled))
+            self.a_x_scaled = self.a_x_physical * time_max / (xy_max**2)
+            self.a_y_scaled = self.a_y_physical * time_max / (xy_max**2)
+            self.a_z_scaled = self.a_z_physical * time_max / (z_max**2)
             
         elif self.mode == 'inverse':
             # Inverse mode: learn SCALED diffusivities directly
-            # Initialize scaled diffusivities to ~1 (recommended)
-            self.a_x_scaled = nn.Parameter(torch.tensor(1.0))
-            self.a_y_scaled = nn.Parameter(torch.tensor(1.0))
+            # Initialize scaled diffusivities to
+            self.a_x_scaled = nn.Parameter(torch.tensor(3.0e-3)) # Our initial guess is that in plane diffusivity is much smaller than in depth
+            self.a_y_scaled = nn.Parameter(torch.tensor(3.0e-3))
             self.a_z_scaled = nn.Parameter(torch.tensor(1.0))
             
-            # Store physical scales for conversion if needed
-            # self.register_buffer('time_max', torch.tensor(time_max))
-            # self.register_buffer('xy_max', torch.tensor(xy_max))
-            # self.register_buffer('z_max', torch.tensor(z_max))
-    
     def forward(self, x_norm):
         """Forward pass with NORMALIZED inputs (0-1 range)"""
         for i in range(len(self.linears) - 1):
@@ -95,11 +81,6 @@ class ThermalDiffusionPINN(nn.Module):
         x_norm = x_norm.clone().detach().requires_grad_(True)
         u = self(x_norm)  # Temperature prediction
         
-        # Get scaled diffusivities
-        a_x = self.a_x_scaled
-        a_y = self.a_y_scaled
-        a_z = self.a_z_scaled
-        
         # Compute first derivatives (w.r.t NORMALIZED coordinates)
         grads = torch.autograd.grad(u, x_norm, grad_outputs=torch.ones_like(u), create_graph=True)[0]
         
@@ -118,7 +99,7 @@ class ThermalDiffusionPINN(nn.Module):
         # Heat equation in NORMALIZED coordinates:
         # ∂u/∂t_norm = a_x_scaled * ∂²u/∂x_norm² + a_y_scaled * ∂²u/∂y_norm² + a_z_scaled * ∂²u/∂z_norm²
         
-        f = u_t_norm - (a_x * u_xx_norm + a_y * u_yy_norm + a_z * u_zz_norm)
+        f = u_t_norm - (self.a_x_scaled * u_xx_norm + self.a_y_scaled * u_yy_norm + self.a_z_scaled * u_zz_norm)
         
         loss_phys = torch.mean(f ** 2)
         return loss_phys

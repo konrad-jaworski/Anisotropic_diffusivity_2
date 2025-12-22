@@ -31,10 +31,10 @@ X_bd,Y_bd=operator.boundary_data(4)
 X_bd_data,Y_bd_data=operator.network_format(X_bd,Y_bd,2)
 
 # Initial conditions of the points
-X_init,Y_init=operator.set_initial_condition_points(20000)
+X_init,Y_init=operator.set_initial_condition_points(50000) # 20000
 
 # Collocation points
-time_axis,space_points=operator.set_collocation_points(100,5000)
+time_axis,space_points=operator.set_collocation_points(10000,200000) # 100 10000
 
 # Normalization of the coordinate space
 
@@ -71,6 +71,9 @@ PINN.to(device)
 log_loss_total=[]
 log_loss_data=[]
 log_loss_phys=[]
+a_x_log=[]
+a_y_log=[]
+a_z_log=[]
 
 optimizer=optim.Adam(PINN.parameters(),lr=1e-3)
 scheduler = CosineAnnealingWarmRestarts(
@@ -80,15 +83,21 @@ scheduler = CosineAnnealingWarmRestarts(
     eta_min=1e-6      # Minimum learning rate
 )
 
-N_epoch=100000
+N_epoch=100000 # A guess since forward case was able to learn it
 
 
-early_stop_patience = 1000
+early_stop_patience = 100000
 early_stop_delta = 1e-6
 best_loss = float("inf")
 epochs_no_improve = 0
 
-# step = operator.time_stepping(time_axis, space_points, 0)
+physic_weight=[0.1,1,100]
+index_phys=0
+
+
+def prior_weight(epoch, N_epoch, w0=1.0, w_min=1e-5):
+    s = epoch / N_epoch
+    return w0 * torch.exp(torch.tensor(-8.0 * s)) + w_min
 
 for i in tqdm(range(N_epoch)):
     
@@ -98,17 +107,45 @@ for i in tqdm(range(N_epoch)):
     # Data loss
     data_loss=PINN.Data_loss(X_data,Y_data)
 
-    pde_loss = torch.tensor(0.0, device=device)
+    # Good for the forward case but slow
+    # pde_loss = torch.tensor(0.0, device=device)
 
-    for j in range(len(time_axis) - 1):
-        step = operator.time_stepping(time_axis, space_points, j)
-        pde_loss += PINN.PDE_loss(step)
+    # for j in range(len(time_axis) - 1):
+    #     step = operator.time_stepping(time_axis, space_points, j)
+    #     pde_loss += PINN.PDE_loss(step)
 
-    pde_loss = pde_loss / (len(time_axis) - 1)
+    # pde_loss = pde_loss / (len(time_axis) - 1)
 
-    # pde_loss=PINN.PDE_loss(step)
+    # Faster approach
+    j = torch.randint(0, len(time_axis)-1, (1,))
+    step = operator.time_stepping(time_axis, space_points, j)
+    pde_loss = PINN.PDE_loss(step)
 
-    loss = data_loss + 1e-1*pde_loss
+   
+    # Forward case
+    # loss = data_loss + 1e-3*pde_loss
+
+    # Iverse case
+
+    L_prior = (
+        ((PINN.a_x_scaled - 3e-3)/3e-3)**2 +
+        ((PINN.a_y_scaled - 3e-3)/3e-3)**2 +
+        ((PINN.a_z_scaled - 1.0)/1.0)**2
+    )
+
+    # Idea but this remained fixed values of diffusion does not allow it for exploration
+    # w_prior = 1e-2 * physic_weight[index_phys]
+    w_prior = prior_weight(i, N_epoch)
+
+    progress = i / (N_epoch - 1)
+    if progress < 0.33:
+        w_pde = physic_weight[0]
+    elif progress < 0.66:
+        w_pde = physic_weight[1]
+    else:
+        w_pde = physic_weight[2]
+   
+    loss=data_loss+w_pde*pde_loss+w_prior*L_prior
 
     loss.backward()
     optimizer.step()
@@ -117,6 +154,9 @@ for i in tqdm(range(N_epoch)):
     log_loss_data.append(data_loss.item())
     log_loss_phys.append(pde_loss.item())
     log_loss_total.append(loss.item())
+    a_x_log.append(PINN.a_x_scaled.item())
+    a_y_log.append(PINN.a_y_scaled.item())
+    a_z_log.append(PINN.a_z_scaled.item())
 
     current_loss = loss.item()
 
@@ -135,7 +175,7 @@ for i in tqdm(range(N_epoch)):
         print(f"Best loss: {best_loss:.6e}")
         break
 
-    if i % 100 == 0:
+    if i % 10 == 0:
         print(f"Epoch {i}, Total Loss: {loss.item():.6f}, Data Loss: {data_loss.item():.6f}, PDE Loss: {pde_loss.item():.6f}")
     
 # Save the model
@@ -145,8 +185,10 @@ log_loss_phys=torch.from_numpy(np.array(log_loss_phys))
 log_loss_total=torch.from_numpy(np.array(log_loss_total))
 torch.save(log_loss_data, 'log_loss_data.pt')
 torch.save(log_loss_phys, 'log_loss_phys.pt')
-torch.save(log_loss_total, 'log_loss_total.pt') 
-
+torch.save(log_loss_total, 'log_loss_total.pt')
+torch.save(a_x_log,'a_x_log.pt')
+torch.save(a_y_log,'a_y_log.pt')
+torch.save(a_z_log,'a_z_log.pt')
 
 
 
